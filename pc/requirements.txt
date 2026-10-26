@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard]
+python-multipart
+paho-mqtt>=2.0

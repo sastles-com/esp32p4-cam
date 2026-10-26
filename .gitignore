@@ -1,0 +1,12 @@
+.pio/
+.vscode/
+sdkconfig
+sdkconfig.*
+!sdkconfig.defaults
+managed_components/
+dependencies.lock
+src/secrets.h
+pc/.venv/
+pc/captures/
+__pycache__/
+.DS_Store

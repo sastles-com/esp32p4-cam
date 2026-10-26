@@ -1,0 +1,31 @@
+# ===== Flash / Partition =====
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ===== PSRAM (ESP32-P4NRW32: 32MB stacked PSRAM) =====
+CONFIG_SPIRAM=y
+
+# ===== System =====
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# ===== HTTP server =====
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+
+# ===== チップリビジョン =====
+# 手元のボード(2台とも)は chip revision v1.3 のため有効化 (2026-10-08 確認)。
+# 新しいリビジョン(v3.x)のチップなら不要。
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+
+# ===== カメラ (要確認: Kconfig名は未検証) =====
+# esp_cam_sensor_imx の README に従い menuconfig で以下を有効化し、
+# 確定した CONFIG_ 名をここに書き戻すこと:
+#   Component config -> Camera Sensor (IMX add-on) -> Support IMX708
+#   Component config -> Camera Motor  (IMX add-on) -> DW9807   (AF用)
+# TODO: CONFIG_xxx_IMX708=y
+# TODO: CONFIG_xxx_DW9807=y
+
+# ===== Wi-Fi (ESP32-C6 coprocessor via esp_hosted / SDIO) (要確認) =====
+# esp_hosted の SDIO 設定・ピンは Waveshare のサンプルから写すこと。
+# TODO: CONFIG_ESP_HOSTED_xxx

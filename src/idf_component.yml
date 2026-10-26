@@ -1,0 +1,20 @@
+## ESP Component Registry から取得する依存コンポーネント
+## 動作確認できたら "*" を具体的なバージョンに固定すること
+dependencies:
+  idf: ">=5.4.0"
+
+  # カメラ: Espressif の V4L2 風ビデオフレームワーク (esp_cam_sensor を内包)
+  espressif/esp_video: "*"
+
+  # Raspberry Pi Camera Module 3 (IMX708) + DW9807 AF のドライバ (コミュニティ製, Apache-2.0)
+  # https://components.espressif.com/components/mushbraindave/esp_cam_sensor_imx
+  mushbraindave/esp_cam_sensor_imx: "*"
+
+  # Wi-Fi: ESP32-P4 には無線が無いため、オンボード ESP32-C6 を SDIO 経由で使う
+  espressif/esp_wifi_remote: "*"
+  # 3.x は "SHELL:-include ..." を使っており PlatformIO のビルドで壊れる。
+  # また C6 側の出荷時ファームとの互換性を考え 2.x に固定する。
+  espressif/esp_hosted: "^2"
+
+  # MQTT は ESP-IDF 標準 (esp-mqtt) なので追加不要
+  # HTTP サーバも ESP-IDF 標準 (esp_http_server)
