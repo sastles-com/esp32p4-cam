@@ -1,0 +1,9 @@
+firmware/build*/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/sdkconfig55*
+firmware/dependencies.lock
+firmware/components/imx_wifi/include/wifi_credentials.h
+!firmware/sdkconfig.defaults
+!firmware/sdkconfig.defaults.c5
