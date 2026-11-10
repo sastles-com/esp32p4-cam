@@ -1,0 +1,3 @@
+
+# root .gitignore ignores sdkconfig.*; this overlay is source
+!sdkconfig.defaults.c5

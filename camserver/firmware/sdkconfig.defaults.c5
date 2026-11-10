@@ -1,0 +1,5 @@
+# Overlay for P4 boards whose wireless co-processor is an ESP32-C5 instead of
+# the ESP32-C6 (the spare board, rev v3.2, reports "esp32c5" over esp_hosted).
+# Use after sdkconfig.defaults:  -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.c5"
+# CONFIG_SLAVE_IDF_TARGET_ESP32C6 is not set
+CONFIG_SLAVE_IDF_TARGET_ESP32C5=y

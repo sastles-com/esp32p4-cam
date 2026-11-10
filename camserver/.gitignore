@@ -1,0 +1,11 @@
+firmware/build/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/components/imx_wifi/include/wifi_credentials.h
+pc/.venv/
+pc/captures/
+__pycache__/
+.DS_Store
+firmware/build55/
+firmware/sdkconfig55*
