@@ -3,8 +3,27 @@
 Waveshare **ESP32-P4-WIFI6-M** と **Raspberry Pi Camera Module 3 (IMX708)** で撮影し、
 Wi-Fi 経由で PC に画像を送る。撮影や設定は **MQTT** または **HTTP(FastAPI / Web UI)** で操作する。
 
-> ステータス: **雛形段階**。ハードウェア未着・未ビルド。
-> 作業を引き継ぐ場合は先に [HANDOFF.md](HANDOFF.md) を読んでください。
+> ステータス (2026-11-11): 実機で動作中。**静止画ツール `camserver/` は完成**とし、
+> そこから **2 つのアプリ**（`wifi-app/`、`usb-app/`）を立ち上げている。計画と進捗は
+> [docs/PLAN-two-apps.md](docs/PLAN-two-apps.md)、経緯と落とし穴は [HANDOFF.md](HANDOFF.md)。
+> 下の「構成」「ディレクトリ」「MQTT トピック案」「HTTP エンドポイント案」は初期の雛形段階の記述で、
+> 実際の構成は「現在の構成」を読むこと。MQTT は使っていない（HTTP のみ）。
+
+## 現在の構成
+
+| ディレクトリ | 内容 | 状態 |
+|---|---|---|
+| `camserver/` | 完成版の静止画ツール。ファーム + PC ツール（FastAPI）。ボタン撮影、MCP23017 照明、露出/WB/AF、MJPEG | 実機で動作。**凍結（参照用）** |
+| `common/webui/` | ボード自身が配信する Web UI（1 ファイル、外部依存なし） | 実機で配信を確認 |
+| `wifi-app/` | アプリ 1: ボードが HTML を持ち、Wi-Fi（SSID 接続、将来は SoftAP も）で操作 | STA 版が動作。SoftAP は未着手 |
+| `usb-app/` | アプリ 2: USB 接続（シリアル / USB HS）。PC 側は REST または HTML | 未着手 |
+| `src/`, `pc/` | 最初の雛形（MQTT 前提）。`pc/camtool.py` は旧ツール | 使っていない |
+
+ビルド: `camserver/` と `wifi-app/` は **ESP-IDF の `idf.py`**（PlatformIO は使わない）。
+新しい基板（チップ rev v3.2、無線コプロセッサは ESP32-C5）は IDF 5.5.x と
+`sdkconfig.defaults.c5` が必要。手順は [HANDOFF.md](HANDOFF.md) の 2026-11-11 の節。
+
+## 以下は初期の雛形段階の記述（参考）
 
 ## ハードウェア
 

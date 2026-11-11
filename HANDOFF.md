@@ -3,6 +3,31 @@
 別の LLM / 開発者がこのプロジェクトを引き継ぐための資料。
 **最終更新: 2026-10-15** ・ ステータス: ① MF 静止画ツールが実機で動作 (ブラウザでの操作感は未確認)。② AF 動画、③ MF 動画は未着手。
 
+## 000. 2026-11-11: ボード交換・2 アプリへの分岐
+
+- **ボードを交換した**。2026-11-10 に自作セレクタへ 12V を誤って通電し、旧ボード（rev v1.3）は USB が認識されなくなった。
+  現在は予備のボードを使っている。**チップは rev v3.2、無線コプロセッサは ESP32-C6 ではなく ESP32-C5**
+  （esp_hosted が `Identified slave [esp32c5]` と報告する）。
+- **ビルド（v3.2 ボード）**: ESP-IDF **5.5.5**（PlatformIO の `framework-espidf`）+ toolchain `esp-14.2.0_20260121`
+  （`idf_tools.py install riscv32-esp-elf` で追加）。IDF 5.4.0 は v3 のチップを拒否する（rev 範囲が v0.1〜v1.99）。
+  `-D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.c5"` で C5 を選ぶ。
+  Python 環境は `idf5.4_py3.11_env` を流用し、`tree_sitter`、`tree_sitter_c`、`esp-idf-diag`、
+  `idf-component-manager` 2.5.x を別ディレクトリに入れて `PYTHONPATH` で通した（古い manager は新しい
+  レジストリの形式を読めず落ちる）。`~/.espressif/espidf.constraints.v5.5.txt` は 5.4 用のコピー。
+- **書き込み**: `~/.platformio/penv/bin/python -m esptool ... write-flash "@flash_args"`（esptool **5.4.0**）。
+  IDF 付属の 4.9.0 は v3 の ROM（eco7）に接続できない。
+- **`camserver/`**（ボタン撮影 GPIO47、MCP23017 照明、`/shot`、`/io`、カメラ無しでも起動）を **完成**とし凍結した。
+  ボタン内蔵 LED（GPIO46、5V + NPN）は保留のまま。
+- **2 アプリに分岐**: ① `wifi-app/`（ボードが HTML を持つ。SSID 接続、将来は SoftAP）、
+  ② `usb-app/`（USB 接続）。計画と進捗は [docs/PLAN-two-apps.md](docs/PLAN-two-apps.md)。
+  共通の画面は `common/webui/index.html`。
+- **USB**: 今の USB-C は CH343（UART）で約 200KB/s。高速なのは別の **MX1.25 4 ピン**（USB 2.0 HS OTG、
+  シルク `V D- D+ G`）。ケーブルの色とピン順は実物で確認すること。P4 側の配線は未確認。
+- **Wi-Fi**: iPhone テザリング `ktnyso` で動作。「共有を許可」がオンでないと AP が見えない（reason 201）。
+  失敗時は周辺 AP を一覧表示する（`imx_wifi.c` の `log_scan`）。
+- **注意**: 自作セレクタは VCC と VDD が内部でつながっていると 12V が 3.3V 系へ逆流する。接続前に電源を切って導通を確認し、
+  SDA/SCL に 4.7k のプルアップを付けること。
+
 ## 00. 2026-10-15: アプリ ① MF 静止画ツール
 
 作るアプリは 3 つ: ① MF 静止画、② AF 動画、③ MF 動画。ファームはアプリごとに別にし、切り替えは毎回 USB で書き込む。録画は PC に保存する (SD は Wi-Fi と同時に使えない)。
