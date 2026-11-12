@@ -1,0 +1,57 @@
+# camcore's share of sdkconfig: target, PSRAM, cache, flash and the camera
+# stack. An app lists it first in SDKCONFIG_DEFAULTS and adds its own link
+# settings after it (usb-app/firmware/CMakeLists.txt).
+#
+# Target
+CONFIG_IDF_TARGET="esp32p4"
+
+# PSRAM — frame buffers + the BMP row work live off SPIRAM
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_HEX=y
+# 200 MHz PSRAM is gated behind the experimental-features flag; without it
+# the choice silently falls back to 20 MHz, which is far too slow to absorb
+# a full-rate camera frame and every capture comes back empty.
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_SPIRAM_SPEED_200M=y
+
+# DMA writes to PSRAM go through L2. The 128 KB / 64-byte-line default turns the
+# camera's stream into short bursts; 256 KB with 128-byte lines lets the DMA
+# drain in half as many, larger PSRAM transactions.
+CONFIG_CACHE_L2_CACHE_256KB=y
+CONFIG_CACHE_L2_CACHE_LINE_128B=y
+
+# 32 MB flash on this board
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+
+# esp_video: MIPI-CSI capture + ISP
+CONFIG_ESP_VIDEO_ENABLE_MIPI_CSI_VIDEO_DEVICE=y
+CONFIG_ESP_VIDEO_ENABLE_ISP_VIDEO_DEVICE=y
+CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER=y
+
+# IMX708 driver + auto-detect
+CONFIG_CAMERA_IMX708=y
+CONFIG_CAMERA_IMX708_AUTO_DETECT_MIPI_INTERFACE_SENSOR=y
+CONFIG_CAMERA_IMX219=n
+
+# Autofocus. The VCM is a separate chip (DW9807 at I2C 0x0c) from the sensor,
+# so it needs its own driver enabled; CAM_MOTOR_DW9807 selects
+# CAMERA_MOTOR_DEVICE_USED, which is what lets the three symbols below turn on.
+CONFIG_CAM_MOTOR_DW9807=y
+CONFIG_CAM_MOTOR_DW9807_AUTO_DETECT=y
+# Manual focus: the application owns the lens.
+#
+# PIPELINE_CONTROL_CAMERA_MOTOR=n stops the ISP pipeline from writing the IPA's
+# AF result to the VCM. There is no runtime switch for this - with it on, the
+# closed-loop AF re-runs on every scene change and overwrites whatever position
+# the application set (the reason imx708_snapshot's FOCUS_SWEEP refuses to build
+# with it on). The application drives V4L2_CID_FOCUS_ABSOLUTE itself and runs
+# its own one-shot AF when asked.
+#
+# The other two stay on:
+#  - ENABLE_CAMERA_MOTOR_CONTROLLER is what lets esp_video reach the VCM at all.
+#  - ESP_IPA_AF_ALGORITHM is required by the "af" block in imx708_default.json;
+#    without the unit compiled in, the whole IPA config fails to resolve and AE
+#    and AWB are lost along with focus. Its result is simply never applied.
+CONFIG_ESP_IPA_AF_ALGORITHM=y
+CONFIG_ESP_VIDEO_ENABLE_CAMERA_MOTOR_CONTROLLER=y
+CONFIG_ESP_VIDEO_ISP_PIPELINE_CONTROL_CAMERA_MOTOR=n

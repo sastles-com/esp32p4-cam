@@ -3,6 +3,7 @@
 sdkconfig
 sdkconfig.*
 !sdkconfig.defaults
+!common/camcore/sdkconfig.camcore
 managed_components/
 dependencies.lock
 src/secrets.h

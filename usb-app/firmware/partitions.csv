@@ -1,0 +1,10 @@
+# ESP-IDF partition table.
+#
+# The same layout as wifi-app, so switching apps by flashing keeps the saved
+# camera settings (storage, /cfg/config.json) where both expect them. The
+# stock 1 MB app slot does not hold the camera stack; 4 MB of 32 costs nothing.
+# Name,   Type, SubType, Offset,  Size
+nvs,      data, nvs,     0x9000,  0x6000
+phy_init, data, phy,     0xf000,  0x1000
+factory,  app,  factory, 0x10000, 4M
+storage,  data, spiffs,  ,        1M

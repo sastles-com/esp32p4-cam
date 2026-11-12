@@ -1,0 +1,35 @@
+# usb-app's own settings. The camera's are in common/camcore/sdkconfig.camcore,
+# which CMakeLists.txt lists before this file.
+#
+# No WiFi: no esp_hosted, no esp_wifi_remote. lwIP is still here - the board's
+# HTTP server runs as in wifi-app, and the link to the PC carries its TCP.
+
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_FREERTOS_HZ=1000
+
+# Console on the CH343 (USB-C), GPIO 37/38. The baud is only settable under
+# ESP_CONSOLE_UART_CUSTOM; under the default choice kconfgen keeps 115200
+# whatever this file says. Flashing is unaffected - esptool sets its own rate.
+CONFIG_ESP_CONSOLE_UART_CUSTOM=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=2000000
+
+# TCP windows as in wifi-app (45 x MSS, the largest that fits 16 bits).
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=64800
+CONFIG_LWIP_TCP_WND_DEFAULT=64800
+# The serial tunnel reaches the servers through 127.0.0.1.
+CONFIG_LWIP_NETIF_LOOPBACK=y
+#
+# Loopback delivers a whole TCP window (64800 = 45 segments) at once, so every
+# queue on the way must hold one. With the defaults a 234 KB JPEG took 19.6 s
+# (12 kB/s) to cross 127.0.0.1:
+#  - TCP_RECVMBOX_SIZE (per socket, default 6): when it is full lwIP parks the
+#    data as "refused" and retries only on its 250 ms slow timer. The Kconfig
+#    help recommends WND / MSS + 2 = 64800 / 1440 + 2 = 47.
+#  - TCPIP_RECVMBOX_SIZE (the TCP/IP task's queue, default 32), and the
+#    loopback queue (LOOPBACK_MAX_PBUFS, default 8; 0 = no cap).
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=47
+CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=64
+CONFIG_LWIP_LOOPBACK_MAX_PBUFS=0
+
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
