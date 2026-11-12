@@ -60,6 +60,15 @@ void camctl_boot_af(void);
  */
 bool camctl_any_auto(void);
 
+/*
+ * The saved image orientation (hflip / vflip in config.json), for camcore to
+ * apply right after opening the camera. It has to be then: the ISP takes the
+ * sensor's Bayer phase only when the format is set, so a flip changed while
+ * streaming gives wrong colours. Changing it over POST /ctrl therefore saves
+ * and restarts the board. Mounts the config FS if camctl_init has not.
+ */
+void camctl_saved_orientation(bool *hflip, bool *vflip);
+
 /* Adds GET/POST /ctrl, GET /ctrl/caps, POST /af, POST /wb/onepush and POST /config/reset. */
 esp_err_t camctl_register_http(httpd_handle_t server);
 

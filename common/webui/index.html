@@ -80,6 +80,9 @@
    <input id="wbb" type="range" min="300" max="3999" value="1500">
    <div class="af"><button id="wbbtn" title="白い紙などを点線の枠に写して押す">白を合わせる</button><span class="hint" id="wbv" style="margin:0"></span></div>
    </div>
+   <div class="row" id="orirow"><h3>向き</h3>
+    <span style="display:inline-flex;gap:10px"><label class="chk"><input id="hflip" type="checkbox">左右反転</label>
+     <label class="chk"><input id="vflip" type="checkbox">上下反転</label></span></div>
    <div id="cmsg"></div>
    <button id="reset">設定をリセット</button>
   </div>
@@ -137,6 +140,7 @@ async function api(method,path,params){
   return j;
 }
 let caps=null, st=null, touched={}, afBusy=false;
+let flipping=false;   // 向きを変えてボードの再起動を待っている間 true
 const touch=k=>touched[k]=Date.now(), fresh=k=>Date.now()-(touched[k]||0)<1500;
 // シャッターは対数目盛り: スライダ 0..1000 <-> min..max µs
 const s2us=v=>Math.round(caps.exposure_us.min*Math.pow(caps.exposure_us.max/caps.exposure_us.min,v/1000));
@@ -179,6 +183,9 @@ function render(s){
     $('wbbtn').disabled=wbBusy;
     $('wbv').textContent=wbBusy?'合わせています…':s.wb_state==='done'?'白を合わせました':s.wb_state==='failed'?'合わせられませんでした (枠に白いものを写して再試行)':'';
   }
+  // 向き: 古いファームは hflip を返さないので行ごと隠す。再起動待ちの間は表示を変えない
+  $('orirow').style.display=('hflip' in s)?'':'none';
+  if(!flipping){ $('hflip').checked=!!s.hflip; $('vflip').checked=!!s.vflip }
   afBusy=s.af_state==='running';
   $('afbtn').disabled=afBusy; if(!busy)$('shot').disabled=afBusy;
   $('afv').textContent=afBusy?'合焦中…':s.af_state==='done'?`合焦 ${s.focus_pos} (${(s.af_ms/1000).toFixed(1)} s)`
@@ -187,10 +194,10 @@ function render(s){
 let pollTimer=null;
 async function poll(){
   clearTimeout(pollTimer);
-  if(!caps)return;
+  if(!caps||flipping)return;
   try{ render(await api('GET','/ctrl')); if(/接続/.test($('cmsg').textContent))cmsg(''); }
-  catch(e){ cmsg('ボードの状態を読めません: '+e.message,'bad') }
-  pollTimer=setTimeout(poll,afBusy?300:1000);
+  catch(e){ if(!flipping)cmsg('ボードの状態を読めません: '+e.message,'bad') }
+  if(!flipping)pollTimer=setTimeout(poll,afBusy?300:1000);
 }
 // 送信は 150ms 以上空けて、最新の値だけを送る
 let pending=null, inflight=false, lastSent=0, sendTimer=null;
@@ -247,10 +254,36 @@ for(const b of $('ltsw').children)b.onclick=async()=>{
   try{ renderLight(await api('POST','/io',{light:b.dataset.v==='on'?1:0})) }
   catch(e){ $('ltv').className='hint bad'; $('ltv').textContent='照明を切り替えられません: '+e.message }
 };
+// ---- 向き (センサーで反転)。ボードは設定を保存して再起動し、起動時に反映する ----
+async function setFlip(key){
+  const el=$(key); el.blur();
+  if(!confirm('向きの変更は、ボードの再起動で反映します（数秒かかります）。変更しますか?')){el.checked=!el.checked;return}
+  try{ await api('POST','/ctrl',{[key]:el.checked?1:0}) }
+  catch(e){ el.checked=!el.checked; cmsg('向きを変えられません: '+e.message,'bad'); return }
+  flipping=true; clearTimeout(pollTimer); $('view').removeAttribute('src');
+  $('ctl').classList.add('off'); cmsg('ボードを再起動しています…','ok');
+  await waitBoard();
+  flipping=false; startPreview(); loadCaps();
+}
+// 再起動が始まるのを待ってから (約 1 秒後)、応答が戻るまで 2 秒おきに確かめる
+async function waitBoard(){
+  for(let i=0;i<30;i++){
+    await new Promise(r=>setTimeout(r,2000));
+    try{ await api('GET','/ctrl/caps'); return }catch(e){}
+  }
+}
+$('hflip').onchange=()=>setFlip('hflip');
+$('vflip').onchange=()=>setFlip('vflip');
 $('reset').onclick=async()=>{
-  if(!confirm('保存された露出・ピント・ホワイトバランスの設定を消して、Auto に戻しますか?'))return;
+  if(!confirm('保存された露出・ピント・ホワイトバランス・向きの設定を消して、Auto に戻しますか?'))return;
+  const wasFlipped=st&&(st.hflip||st.vflip);
   try{ render(await api('POST','/config/reset')); cmsg('設定をリセットしました','ok') }
-  catch(e){ cmsg('リセットできません: '+e.message,'bad') }
+  catch(e){ cmsg('リセットできません: '+e.message,'bad'); return }
+  if(wasFlipped){   // 向きも戻すので、ボードが再起動する
+    flipping=true; clearTimeout(pollTimer); $('view').removeAttribute('src');
+    $('ctl').classList.add('off'); cmsg('向きを戻すため、ボードを再起動しています…','ok');
+    await waitBoard(); flipping=false; startPreview(); loadCaps();
+  }
 };
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!/INPUT|SELECT/.test(document.activeElement.tagName)){e.preventDefault();shutter()}});
 const shots=[];   // この画面で撮った写真 (ブラウザのメモリ上。ページを閉じると消える)

@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_system.h"
 #include "esp_littlefs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -113,7 +114,8 @@ static struct {
     int32_t focus_pos;      /* manual lens position, DAC code */
     cmode_t wb_mode;
     int32_t wb_red, wb_blue;    /* milli; in auto, where the loop has got to */
-} s_cfg = { M_AUTO, M_AUTO, M_AUTO, 0, 0, 512, M_AUTO, WB_DEFAULT, WB_DEFAULT };
+    bool hflip, vflip;          /* applied at boot only - see camctl_saved_orientation() */
+} s_cfg = { M_AUTO, M_AUTO, M_AUTO, 0, 0, 512, M_AUTO, WB_DEFAULT, WB_DEFAULT, false, false };
 
 /* What the hardware allows, read once at init. */
 static struct {
@@ -554,6 +556,8 @@ static void save_now(void)
     cJSON_AddStringToObject(o, "wb_mode", mode_str(s_cfg.wb_mode));
     cJSON_AddNumberToObject(o, "wb_red", s_cfg.wb_red);
     cJSON_AddNumberToObject(o, "wb_blue", s_cfg.wb_blue);
+    cJSON_AddBoolToObject(o, "hflip", s_cfg.hflip);
+    cJSON_AddBoolToObject(o, "vflip", s_cfg.vflip);
     xSemaphoreGive(s_lock);
 
     char *text = cJSON_PrintUnformatted(o);
@@ -610,6 +614,14 @@ static cJSON *read_json(const char *path)
     return cJSON_Parse(buf);
 }
 
+/* hflip / vflip from a parsed config.json; true and 1 both count. */
+static void read_orientation(const cJSON *o)
+{
+    const cJSON *it;
+    if ((it = cJSON_GetObjectItem(o, "hflip"))) s_cfg.hflip = cJSON_IsTrue(it) || (cJSON_IsNumber(it) && it->valueint);
+    if ((it = cJSON_GetObjectItem(o, "vflip"))) s_cfg.vflip = cJSON_IsTrue(it) || (cJSON_IsNumber(it) && it->valueint);
+}
+
 /* Fill s_cfg from config.json. Unknown keys are ignored, out-of-range values
  * clamped, and anything unreadable leaves the defaults in place. */
 static void load_config(void)
@@ -641,6 +653,7 @@ static void load_config(void)
     if ((it = cJSON_GetObjectItem(o, "wb_mode")) && cJSON_IsString(it) && parse_mode(it->valuestring, &m)) s_cfg.wb_mode = m;
     if ((it = cJSON_GetObjectItem(o, "wb_red")) && cJSON_IsNumber(it)) s_cfg.wb_red = clamp_i32(it->valueint, WB_MIN, WB_MAX);
     if ((it = cJSON_GetObjectItem(o, "wb_blue")) && cJSON_IsNumber(it)) s_cfg.wb_blue = clamp_i32(it->valueint, WB_MIN, WB_MAX);
+    read_orientation(o);
     cJSON_Delete(o);
 
     s_config_state = "loaded";
@@ -651,6 +664,9 @@ static void load_config(void)
 
 static void mount_fs(void)
 {
+    static bool tried;          /* camctl_saved_orientation() may have mounted it */
+    if (tried) return;
+    tried = true;
     esp_vfs_littlefs_conf_t conf = {
         .base_path = CFG_BASE,
         .partition_label = CFG_PARTITION,
@@ -661,6 +677,35 @@ static void mount_fs(void)
     if (!s_fs_ok) {
         ESP_LOGW(TAG, "config FS mount failed (%s) - settings will not persist", esp_err_to_name(r));
     }
+}
+
+void camctl_saved_orientation(bool *hflip, bool *vflip)
+{
+    mount_fs();
+    cJSON *o = s_fs_ok ? read_json(CFG_FILE) : NULL;
+    cJSON *v = o ? cJSON_GetObjectItem(o, "version") : NULL;
+    if (o && cJSON_IsNumber(v) && v->valueint == CFG_VERSION) read_orientation(o);
+    cJSON_Delete(o);
+    *hflip = s_cfg.hflip;
+    *vflip = s_cfg.vflip;
+}
+
+/* A flip takes a restart (see camctl.h). Late enough for the reply to leave -
+ * over the USB serial tunnel too. */
+#define RESTART_DELAY_US    (800 * 1000)
+
+static void restart_cb(void *arg)
+{
+    esp_restart();
+}
+
+static void restart_soon(void)
+{
+    static esp_timer_handle_t t;
+    const esp_timer_create_args_t ta = { .callback = restart_cb, .name = "flip_restart" };
+    if (!t && esp_timer_create(&ta, &t) != ESP_OK) return;
+    ESP_LOGW(TAG, "orientation changed - restarting to apply it");
+    esp_timer_start_once(t, RESTART_DELAY_US);
 }
 
 /* ---- Init --------------------------------------------------------------- */
@@ -809,21 +854,23 @@ static esp_err_t send_state(httpd_req_t *req, const char *status)
     int focus = focus_get();
     cmode_t em = s_cfg.exp_mode, gm = s_cfg.gain_mode, fm = s_cfg.focus_mode, wm = s_cfg.wb_mode;
     int32_t wr = s_cfg.wb_red, wbl = s_cfg.wb_blue;
+    bool hf = s_cfg.hflip, vf = s_cfg.vflip;
     xSemaphoreGive(s_lock);
 
     uint32_t gm_milli = (gain >= s_caps.gain_min && gain <= s_caps.gain_max) ? s_caps.gain_milli[gain] : 0;
-    char body[520];
+    char body[600];
     int n = snprintf(body, sizeof(body),
         "{\"exposure_mode\":\"%s\",\"gain_mode\":\"%s\",\"focus_mode\":\"%s\","
         "\"exposure_us\":%" PRIu32 ",\"exposure_lines\":%" PRId32 ","
         "\"gain_index\":%" PRId32 ",\"gain_x\":%" PRIu32 ".%02" PRIu32 ","
         "\"focus_pos\":%d,\"af_state\":\"%s\",\"af_score\":%" PRIu32 ",\"af_ms\":%" PRIu32 ","
         "\"wb_mode\":\"%s\",\"wb_red\":%" PRId32 ",\"wb_blue\":%" PRId32 ",\"wb_state\":\"%s\","
-        "\"shutter_priority\":\"%c\",\"config\":\"%s\"}",
+        "\"hflip\":%s,\"vflip\":%s,\"shutter_priority\":\"%c\",\"config\":\"%s\"}",
         mode_str(em), mode_str(gm), mode_str(fm),
         exp >= 0 ? lines_to_us(exp) : 0, exp, gain, gm_milli / 1000, (gm_milli % 1000) / 10,
         focus, s_af_names[s_af_state], s_af_score, s_af_ms,
-        mode_str(wm), wr, wbl, s_wb_names[s_wb_state], s_sp_method, s_config_state);
+        mode_str(wm), wr, wbl, s_wb_names[s_wb_state], hf ? "true" : "false", vf ? "true" : "false",
+        s_sp_method, s_config_state);
     return send_json(req, status, body, n);
 }
 
@@ -868,7 +915,7 @@ static esp_err_t ctrl_post_handler(httpd_req_t *req)
     /* Parse everything before touching anything, so a bad key changes nothing. */
     static const char *const known[] = { "exposure_mode", "gain_mode", "exposure_us",
                                          "gain_index", "focus_mode", "focus_pos",
-                                         "wb_mode", "wb_red", "wb_blue", "sp" };
+                                         "wb_mode", "wb_red", "wb_blue", "sp", "hflip", "vflip" };
     for (char *p = q; *p; ) {
         char *amp = strchr(p, '&');
         size_t len = amp ? (size_t)(amp - p) : strlen(p);
@@ -913,6 +960,15 @@ static esp_err_t ctrl_post_handler(httpd_req_t *req)
     if (httpd_query_key_value(q, "sp", v, sizeof(v)) == ESP_OK) {
         if (strcmp(v, "A") && strcmp(v, "B")) return send_error(req, "400 Bad Request", "sp must be A or B");
         sp = v[0];
+    }
+    int hf = -1, vf = -1;   /* -1 = not given */
+    if (httpd_query_key_value(q, "hflip", v, sizeof(v)) == ESP_OK) {
+        if (strcmp(v, "0") && strcmp(v, "1")) return send_error(req, "400 Bad Request", "hflip must be 0 or 1");
+        hf = v[0] == '1';
+    }
+    if (httpd_query_key_value(q, "vflip", v, sizeof(v)) == ESP_OK) {
+        if (strcmp(v, "0") && strcmp(v, "1")) return send_error(req, "400 Bad Request", "vflip must be 0 or 1");
+        vf = v[0] == '1';
     }
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -973,8 +1029,20 @@ static esp_err_t ctrl_post_handler(httpd_req_t *req)
     if (has_wb) s_cfg.wb_blue = clamp_i32((int32_t)wbl, WB_MIN, WB_MAX);
     if (has_wm) s_cfg.wb_mode = wm;
     if ((has_wr || has_wb) && s_cfg.wb_mode == M_MANUAL) wb_write(s_cfg.wb_red, s_cfg.wb_blue);
+
+    /* Orientation applies at boot only (camctl.h): save now, reply, restart. */
+    bool reorient = (hf >= 0 && hf != s_cfg.hflip) || (vf >= 0 && vf != s_cfg.vflip);
+    if (hf >= 0) s_cfg.hflip = hf;
+    if (vf >= 0) s_cfg.vflip = vf;
     xSemaphoreGive(s_lock);
 
+    if (reorient) {
+        if (s_save_timer) esp_timer_stop(s_save_timer);
+        save_now();
+        esp_err_t r = send_state(req, NULL);
+        restart_soon();
+        return r;
+    }
     save_later();
     return send_state(req, NULL);
 }
@@ -1019,9 +1087,13 @@ static esp_err_t reset_handler(httpd_req_t *req)
     apply_exposure_locked();
     if (was_manual_focus) af_start_locked();
     s_config_state = "default";
+    bool was_flipped = s_cfg.hflip || s_cfg.vflip;
+    s_cfg.hflip = s_cfg.vflip = false;
     xSemaphoreGive(s_lock);
     ESP_LOGI(TAG, "config reset to defaults");
-    return send_state(req, NULL);
+    esp_err_t r = send_state(req, NULL);
+    if (was_flipped) restart_soon();   /* the sensor is still flipped until then */
+    return r;
 }
 
 esp_err_t camctl_register_http(httpd_handle_t server)

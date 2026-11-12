@@ -49,6 +49,8 @@
 #include "linux/videodev2.h"
 #include "esp_video_init.h"
 #include "esp_video_device.h"
+#include "esp_video_ioctl.h"
+#include "esp_cam_sensor_types.h"
 #include "driver/jpeg_encode.h"
 #include "driver/ppa.h"
 #include "driver/i2c_master.h"
@@ -751,6 +753,49 @@ static httpd_handle_t start_server(bool with_camera)
 static struct capture_ctx s_cap_ctx;   /* static: the capture task keeps the pointer */
 
 /*
+ * Flip the sensor before any buffer exists, and return the fd to use from then
+ * on. The flip is a control, but it also moves the Bayer phase, and the ISP
+ * has to demosaic with the new one or the picture comes out magenta.
+ *
+ * VIDIOC_S_SENSOR_FMT alone does not do it in esp_video 2.5: it swaps the
+ * format it is given for the matching entry of the sensor's static table
+ * (resolve_sensor_format) and configures the CSI/ISP from that - which holds
+ * the unflipped phase - before the driver writes the flipped one into its
+ * shadow. What it does do is leave the device pointing at that shadow
+ * (common->sensor_format = cur_format). Closing and reopening the device then
+ * runs its init again, which configures from the device's own format with no
+ * table lookup, and the phase is right.
+ *
+ * Not possible once buffers exist; a change at run time is saved and the board
+ * restarts (camctl.c).
+ */
+static int apply_orientation(int fd, bool hflip, bool vflip)
+{
+    struct v4l2_ext_control c[2] = {
+        { .id = V4L2_CID_HFLIP, .value = hflip },
+        { .id = V4L2_CID_VFLIP, .value = vflip },
+    };
+    struct v4l2_ext_controls cs = { .ctrl_class = V4L2_CTRL_CLASS_USER, .count = 2, .controls = c };
+    if (ioctl(fd, VIDIOC_S_EXT_CTRLS, &cs) != 0) {
+        ESP_LOGE(TAG, "flip h=%d v=%d refused - picture stays unflipped", hflip, vflip);
+        return fd;
+    }
+    esp_cam_sensor_format_t sf;
+    if (ioctl(fd, VIDIOC_G_SENSOR_FMT, &sf) != 0 || ioctl(fd, VIDIOC_S_SENSOR_FMT, &sf) != 0) {
+        ESP_LOGE(TAG, "could not re-set the sensor format after the flip - colours will be wrong");
+        return fd;
+    }
+    close(fd);
+    fd = open(CAM_DEV_PATH, O_RDONLY);
+    if (fd < 0) {
+        ESP_LOGE(TAG, "reopening %s after the flip failed", CAM_DEV_PATH);
+        return fd;
+    }
+    ESP_LOGI(TAG, "orientation: %s%s", hflip ? "mirrored left-right " : "", vflip ? "flipped top-bottom" : "");
+    return fd;
+}
+
+/*
  * Bring the sensor up through to a running stream. False, with the reason
  * logged, if any step fails; nothing is left half-published for the callers
  * (s_frame stays NULL), so the rest of the program can run without a camera.
@@ -767,6 +812,14 @@ static bool camera_start(void)
     if (fd < 0) {
         ESP_LOGE(TAG, "open %s failed", CAM_DEV_PATH);
         return false;
+    }
+
+    bool hflip, vflip;
+    camctl_saved_orientation(&hflip, &vflip);
+    if (hflip || vflip) {
+        fd = apply_orientation(fd, hflip, vflip);
+        s_cap_ctx.fd = fd;
+        if (fd < 0) return false;
     }
 
     const int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
