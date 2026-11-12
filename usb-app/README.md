@@ -27,6 +27,8 @@
 wifi-app に戻すときは `wifi-app/firmware` を書き込む。保存した露出・ピント・WB の設定（`/cfg/config.json`）は
 両アプリで同じ場所にあるので、そのまま引き継がれる。
 
+HTTP API（`/ctrl`、`/snapshot.jpg`、`/io` など）の仕様は [API.md](API.md)。
+
 ## 速さ（2 Mbaud、実測 2026-11-12）
 
 | 操作 | 結果 |

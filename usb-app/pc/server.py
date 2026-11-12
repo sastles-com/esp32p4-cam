@@ -42,7 +42,7 @@ API_PORT, MJPEG_PORT = 80, 81
 API_SLOTS = 3
 # Big transfers: the preview pauses while one of these is on the link.
 BIG_PATHS = {"snapshot.jpg", "snapshot.raw", "shot.jpg", "bench"}
-PASS_HEADERS = ("content-type", "content-length", "cache-control", "x-frame-size", "x-frame-format")
+PASS_HEADERS = ("content-type", "content-length", "cache-control", "x-frame-size", "x-frame-format", "x-shot-id")
 
 
 def log(msg: str) -> None:
