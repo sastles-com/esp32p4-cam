@@ -246,7 +246,10 @@ def main() -> None:
         for ip in lan_addresses() or ["<this PC's IP>"]:
             log(f"  http://{ip}:{a.port}/")
     log(f"  http://127.0.0.1:{a.port}/")
-    uvicorn.run(build_app(port, a.baud, a.debug), host=a.host, port=a.port, log_level="warning")
+    # An open preview is a response that never ends; without a limit, Ctrl+C
+    # would wait for every viewer to leave while the serial port stays held.
+    uvicorn.run(build_app(port, a.baud, a.debug), host=a.host, port=a.port, log_level="warning",
+                timeout_graceful_shutdown=2)
 
 
 if __name__ == "__main__":

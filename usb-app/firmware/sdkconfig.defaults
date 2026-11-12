@@ -30,6 +30,14 @@ CONFIG_LWIP_NETIF_LOOPBACK=y
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=47
 CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=64
 CONFIG_LWIP_LOOPBACK_MAX_PBUFS=0
+#
+# Every tunnel channel costs two sockets - the tunnel's end and the server's
+# end of the same loopback connection - on top of the servers' own four (two
+# listening, two control). The default of 10 left room for about three
+# connections: a full-size preview plus the page's /ctrl and /io polling used
+# them up, and the shutter's connect failed with ENFILE (503 in the browser).
+# 8 channels x 2 + 4 = 20; 32 leaves margin.
+CONFIG_LWIP_MAX_SOCKETS=32
 
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
