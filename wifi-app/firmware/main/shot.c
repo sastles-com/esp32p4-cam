@@ -34,9 +34,6 @@ static const char *TAG = "shot";
 /* LED: on when ready, flashing (every LED_BLINK_POLLS polls) while a shot is taken. */
 #define LED_BLINK_POLLS     10
 
-/* Which ioexp outputs are the light: OUT0 on J3. */
-#define LIGHT_MASK          (1u << 0)
-
 /*
  * Settle after the light comes on. The frame being read out when the I2C write
  * lands was partly exposed in the dark (rolling shutter), and the one after can

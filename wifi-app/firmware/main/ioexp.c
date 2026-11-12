@@ -134,9 +134,10 @@ static esp_err_t send_error(httpd_req_t *req, const char *status, const char *ms
 
 static esp_err_t send_io_state(httpd_req_t *req)
 {
-    char body[64];
-    int n = snprintf(body, sizeof(body), "{\"present\":%s,\"addr\":%d,\"out\":%u}",
-                     s_present ? "true" : "false", MCP_ADDR, s_out);
+    char body[96];
+    int n = snprintf(body, sizeof(body), "{\"present\":%s,\"addr\":%d,\"out\":%u,\"light\":%s}",
+                     s_present ? "true" : "false", MCP_ADDR, s_out,
+                     (s_out & LIGHT_MASK) == LIGHT_MASK ? "true" : "false");
     return send_json(req, NULL, body, n);
 }
 
@@ -148,6 +149,7 @@ static esp_err_t io_get_handler(httpd_req_t *req)
 /*
  * POST /io?ch=<0..7>&on=<0|1>   one output
  * POST /io?out=<0..255>         all eight at once
+ * POST /io?light=<0|1>          the light's outputs (LIGHT_MASK in pins.h)
  */
 static esp_err_t io_post_handler(httpd_req_t *req)
 {
@@ -161,6 +163,10 @@ static esp_err_t io_post_handler(httpd_req_t *req)
         if (end == v || *end || out < 0 || out > 255) return send_error(req, "400 Bad Request", "out must be 0..255");
         mask = 0xff;
         value = (uint8_t)out;
+    } else if (httpd_query_key_value(q, "light", v, sizeof(v)) == ESP_OK) {
+        if (strcmp(v, "0") && strcmp(v, "1")) return send_error(req, "400 Bad Request", "light must be 0 or 1");
+        mask = LIGHT_MASK;
+        value = v[0] == '1' ? LIGHT_MASK : 0;
     } else if (httpd_query_key_value(q, "ch", v, sizeof(v)) == ESP_OK) {
         long ch = strtol(v, &end, 10);
         if (end == v || *end || ch < 0 || ch > 7) return send_error(req, "400 Bad Request", "ch must be 0..7");
@@ -170,7 +176,7 @@ static esp_err_t io_post_handler(httpd_req_t *req)
         mask = 1u << ch;
         value = v[0] == '1' ? mask : 0;
     } else {
-        return send_error(req, "400 Bad Request", "give out=, or ch= and on=");
+        return send_error(req, "400 Bad Request", "give out=, light=, or ch= and on=");
     }
 
     esp_err_t r = ioexp_write(mask, value);

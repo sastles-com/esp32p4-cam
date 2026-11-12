@@ -30,6 +30,10 @@
 #define IOEXP_SDA_PIN       21
 #define IOEXP_FREQ_HZ       400000
 
+/* Which MCP23017 outputs (port B bits) drive the light: OUT0 and OUT1 on J3,
+ * one LED each. A shot switches these; POST /io?light= switches them by hand. */
+#define LIGHT_MASK          ((1u << 0) | (1u << 1))
+
 /*
  * ---- Shutter button with a built-in LED (four wires).
  * Three header pins in a row, GND in the middle:

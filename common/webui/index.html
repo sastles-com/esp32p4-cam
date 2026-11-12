@@ -36,6 +36,8 @@
  #cmsg{min-height:1.4em;font-size:12px;margin-top:6px}
  .pv{position:relative}
  #wbbox{position:absolute;left:37.5%;top:37.5%;width:25%;height:25%;border:1px dashed #fff8;pointer-events:none;display:none}
+ #lt{margin-top:14px;border-top:1px solid #8884;padding-top:4px}
+ #lt .sw button:disabled{opacity:.4;cursor:default}
  #reset{color:var(--mut);font-size:11px;background:none;border:0;padding:0;margin-top:8px;cursor:pointer;text-decoration:underline}
 </style>
 <main>
@@ -51,6 +53,11 @@
   <input id="pq" type="range" min="10" max="95" value="50">
   <label for="sq">シャッターの画質 <span id="sqv"></span></label>
   <input id="sq" type="range" min="50" max="100" value="100">
+  <div id="lt">
+   <div class="row"><h3>照明</h3>
+    <span class="sw" id="ltsw"><button data-v="on" disabled>ON</button><button data-v="off" disabled>OFF</button></span></div>
+   <div class="hint" id="ltv">照明の状態を読んでいます…</div>
+  </div>
   <div id="ctl" class="off">
    <div class="row"><h3>露出</h3>
     <span class="sw" id="expsw"><button data-v="auto">Auto</button><button data-v="manual">Manual</button></span></div>
@@ -219,6 +226,27 @@ $('afbtn').onclick=async()=>{
   try{ await api('POST','/af'); afBusy=true; $('afbtn').disabled=true; $('afv').textContent='合焦中…'; poll() }
   catch(e){ cmsg('AF を開始できません: '+e.message,'bad') }
 };
+// ---- 照明 (ボードの /io)。どの出力が照明かはボード側 (pins.h の LIGHT_MASK) が決める ----
+// ON にしたままシャッターを押すと、照明は点いたまま撮る (撮影後も消えない)。
+let ltTimer=null;
+function renderLight(j){
+  const ok=!!j.present;
+  for(const b of $('ltsw').children)b.disabled=!ok;
+  setSw('ltsw',ok?(j.light?'on':'off'):'');
+  $('ltv').className='hint'+(ok?'':' bad');
+  $('ltv').textContent=ok?(j.light?'点灯中 (撮影しても点いたまま)':'消灯中 (撮影の間だけ点く)'):'照明ボード (MCP23017) が見つかりません';
+}
+async function pollLight(){
+  clearTimeout(ltTimer);
+  try{ renderLight(await api('GET','/io')) }
+  catch(e){ $('ltv').className='hint bad'; $('ltv').textContent='照明の状態を読めません: '+e.message }
+  ltTimer=setTimeout(pollLight,2000);
+}
+for(const b of $('ltsw').children)b.onclick=async()=>{
+  b.blur();
+  try{ renderLight(await api('POST','/io',{light:b.dataset.v==='on'?1:0})) }
+  catch(e){ $('ltv').className='hint bad'; $('ltv').textContent='照明を切り替えられません: '+e.message }
+};
 $('reset').onclick=async()=>{
   if(!confirm('保存された露出・ピント・ホワイトバランスの設定を消して、Auto に戻しますか?'))return;
   try{ render(await api('POST','/config/reset')); cmsg('設定をリセットしました','ok') }
@@ -229,5 +257,5 @@ const shots=[];   // この画面で撮った写真 (ブラウザのメモリ上
 function renderGallery(){
   $('gal').innerHTML=shots.map(s=>`<a href="${s.url}" download="${s.name}" title="${s.name} (クリックで保存)"><img src="${s.url}"></a>`).join('');
 }
-startPreview(); loadCaps();
+startPreview(); loadCaps(); pollLight();
 </script></html>
