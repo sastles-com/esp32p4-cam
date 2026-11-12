@@ -1,0 +1,26 @@
+# camcore: shared by the apps. A project pulls it in with camcore_project.cmake.
+idf_component_register(
+    SRCS "camcore.c" "camctl.c" "ioexp.c" "shot.c"
+    INCLUDE_DIRS "include"
+    # The page served at "/": one file shared by every app.
+    EMBED_TXTFILES "${CMAKE_CURRENT_LIST_DIR}/../webui/index.html"
+    REQUIRES esp_http_server esp_driver_i2c
+    PRIV_REQUIRES esp_video esp_ipa esp_cam_sensor_imx esp_driver_jpeg esp_driver_ppa esp_timer json
+                  esp_driver_gpio
+)
+
+# Fail the build if the IMX708 ISP tuning config did not resolve. esp_ipa's own
+# existence check is spelled message(FETAL_ERROR ...) - not a real CMake mode -
+# so it prints and carries on, and a missing file shows up much later as a
+# stream with no auto-exposure and no white balance rather than as an error.
+# By the time this component is configured the path is final, so check it here.
+idf_build_get_property(imx708_ipa_json IMX708_IPA_JSON_RESOLVED)
+idf_build_get_property(imx708_project_dir PROJECT_DIR)
+get_filename_component(imx708_ipa_abs "${imx708_ipa_json}"
+    ABSOLUTE BASE_DIR "${imx708_project_dir}")
+if(NOT EXISTS "${imx708_ipa_abs}")
+    message(FATAL_ERROR
+        "IMX708 ISP tuning config not found at:\n  ${imx708_ipa_abs}\n"
+        "esp_ipa would silently skip it and the camera would run with no "
+        "auto-exposure and no white balance. Check camcore_project.cmake.")
+endif()
