@@ -12,7 +12,7 @@
  label{display:block;margin:10px 0 4px;color:var(--mut);font-size:12px}
  input,select{width:100%;padding:7px;border-radius:6px;border:1px solid #0003;background:var(--bg);color:var(--fg);font:inherit}
  input[type=range]{padding:0}
- button#shot{width:100%;margin-top:14px;padding:16px;font-size:18px;font-weight:600;border:0;border-radius:10px;background:var(--acc);color:#fff;cursor:pointer}
+ button#shot{width:100%;margin-top:0;padding:16px;font-size:18px;font-weight:600;border:0;border-radius:10px;background:var(--acc);color:#fff;cursor:pointer}
  button#shot:disabled{opacity:.6;cursor:wait}
  #msg{margin-top:8px;min-height:2.6em;font-size:13px}.ok{color:var(--ok)}.bad{color:var(--bad)}
  #gal{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}
@@ -46,6 +46,8 @@
   <div class="hint" id="pinfo"></div>
  </section>
  <aside class="card">
+  <button id="shot">シャッター (Space)</button>
+  <div id="msg"></div>
   <label for="n">プレビューのサイズ</label>
   <select id="n"><option value="4">480×264</option><option value="8" selected>960×536</option>
    <option value="12">1440×792</option><option value="16">1920×1080</option></select>
@@ -86,8 +88,6 @@
    <div id="cmsg"></div>
    <button id="reset">設定をリセット</button>
   </div>
-  <button id="shot">シャッター (Space)</button>
-  <div id="msg"></div>
   <h2>撮影した写真 <span style="font-weight:400">(クリックで保存)</span></h2><div id="gal"></div>
  </aside>
 </main>
