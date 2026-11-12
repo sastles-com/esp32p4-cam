@@ -3,7 +3,7 @@
 Waveshare **ESP32-P4-WIFI6-M** と **Raspberry Pi Camera Module 3 (IMX708)** で撮影し、
 Wi-Fi 経由で PC に画像を送る。撮影や設定は **MQTT** または **HTTP(FastAPI / Web UI)** で操作する。
 
-> ステータス (2026-11-11): 実機で動作中。**静止画ツール `camserver/` は完成**とし、
+> ステータス (2026-11-12): 実機で動作中。**静止画ツール `camserver/` は完成**とし、
 > そこから **2 つのアプリ**（`wifi-app/`、`usb-app/`）を立ち上げている。計画と進捗は
 > [docs/PLAN-two-apps.md](docs/PLAN-two-apps.md)、経緯と落とし穴は [HANDOFF.md](HANDOFF.md)。
 > 下の「構成」「ディレクトリ」「MQTT トピック案」「HTTP エンドポイント案」は初期の雛形段階の記述で、
@@ -14,12 +14,13 @@ Wi-Fi 経由で PC に画像を送る。撮影や設定は **MQTT** または **
 | ディレクトリ | 内容 | 状態 |
 |---|---|---|
 | `camserver/` | 完成版の静止画ツール。ファーム + PC ツール（FastAPI）。ボタン撮影、MCP23017 照明、露出/WB/AF、MJPEG | 実機で動作。**凍結（参照用）** |
+| `common/camcore/` | カメラ・照明・ボタン・HTTP API の共通コンポーネント（wifi-app と usb-app が使う） | 実機で動作 |
 | `common/webui/` | ボード自身が配信する Web UI（1 ファイル、外部依存なし） | 実機で配信を確認 |
 | `wifi-app/` | アプリ 1: ボードが HTML を持ち、Wi-Fi（SSID 接続、将来は SoftAP も）で操作 | STA 版が動作。SoftAP は未着手 |
-| `usb-app/` | アプリ 2: USB 接続（シリアル / USB HS）。PC 側は REST または HTML | 未着手 |
+| `usb-app/` | アプリ 2: USB 接続。PC の FastAPI が同じ画面を LAN に配信（[usb-app/README.md](usb-app/README.md)） | シリアル版が動作。USB HS（NCM）は未着手 |
 | `src/`, `pc/` | 最初の雛形（MQTT 前提）。`pc/camtool.py` は旧ツール | 使っていない |
 
-ビルド: `camserver/` と `wifi-app/` は **ESP-IDF の `idf.py`**（PlatformIO は使わない）。
+ビルド: `camserver/`、`wifi-app/`、`usb-app/firmware` は **ESP-IDF の `idf.py`**（PlatformIO は使わない）。
 新しい基板（チップ rev v3.2、無線コプロセッサは ESP32-C5）は IDF 5.5.x と
 `sdkconfig.defaults.c5` が必要。手順は [HANDOFF.md](HANDOFF.md) の 2026-11-11 の節。
 

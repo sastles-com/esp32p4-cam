@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn>=0.29
+pyserial>=3.5
+h11>=0.14
+# Flashing the v3.2 board needs esptool 5.x (4.x cannot reach its ROM).
+esptool==5.4.0

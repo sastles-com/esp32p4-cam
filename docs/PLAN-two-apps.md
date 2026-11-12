@@ -2,20 +2,25 @@
 
 > 作成: 2026-11-11。この文書は計画の記録。下の「進捗」を最新の状態として読むこと。
 
-## 進捗（2026-11-11 時点）
+## 進捗（2026-11-12 時点）
 | 段階 | 状態 | メモ |
 |---|---|---|
 | P0 USB 配線の確認 | 一部済 | ネイティブ USB は **MX1.25 4ピン**（シルク `V D- D+ G`）。P4 のどのピンかは回路図未確認。ケーブルの色とピン順は実物で確認が必要 |
 | P0 SoftAP のスパイク | 未 | |
 | P1 内蔵 UI（STA） | 済（サーバー側まで） | `common/webui/index.html`、`wifi-app/firmware`。実機で `/` と `/ctrl/caps` の応答を確認。**ブラウザでの操作感は未確認** |
 | P2 SoftAP + Wi-Fi 設定画面 | 未 | |
-| P3 usb-app 経路A（シリアル） | 未 | CH343 は UART 律速で約 200KB/s。フル JPEG は約 2.5 秒 |
+| 共通部 `common/camcore` | 済 | wifi-app から切り出し（`camcore_init/start/serve`）。wifi-app で回帰確認済み |
+| P3 usb-app 経路A（シリアル） | 済（実機・curl で確認） | UART 上の TCP トンネル + PC の FastAPI（`usb-app/README.md`）。q90 静止画 約 1.3 秒、プレビュー約 7 fps。**ブラウザでの操作感は未確認** |
 | P4 usb-app 経路B（USB NCM） | 未 | 先にケーブルと配線の確認 |
 
 実装で計画から変わった点:
 - `camctl.c` は未知のキーを 400（`unknown key`）で拒否することを確認した（`camctl.c:881`）。
 - `camserver/` と `wifi-app/` の `override_path` は、ディレクトリの深さに合わせて `../../../../esp32-p4-imx-camera/...` に直した。
 - 新ボード（rev v3.2）は無線コプロセッサが **ESP32-C5** だったため、`sdkconfig.defaults.c5` を重ねてビルドする。
+- usb-app 経路A は「ボードの HTTP サーバーをそのまま使い、UART に TCP のトンネルを通す」方式にした（API を二重に持たない）。
+  Wi-Fi なしでも lwIP のループバックで 127.0.0.1 に届くが、既定のキューでは 12 kB/s しか出ない。
+  `TCP_RECVMBOX_SIZE=47` などで 1.3 MB/s（`usb-app/firmware/sdkconfig.defaults` に理由）。
+- ログはフレーム化せず、同じ UART にそのまま流す（フレームは 1 回の `uart_write_bytes` で出すので混ざらない）。
 
 ## Context
 camserver（`esp32p4-cam/camserver/`）は実機で動作確認済み（ボタン撮影、照明、露出/WB/AF 制御、MJPEG、JPEG 取得）。これを「現状で完成」とし、次の2つを別プロジェクトとして立ち上げる。

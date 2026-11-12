@@ -1,0 +1,7 @@
+menu "usb-app"
+    config USBAPP_TUNNEL_DEBUG
+        bool "Log every tunnel channel open and close"
+        default n
+        help
+            Each request then adds two or three log lines on the serial link.
+endmenu
