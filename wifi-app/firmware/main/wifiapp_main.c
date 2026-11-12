@@ -724,14 +724,14 @@ static httpd_handle_t start_server(bool with_camera)
     cfg.send_wait_timeout = 10;
     cfg.recv_wait_timeout = 10;
     static const httpd_uri_t uris[] = {
-        { .uri = "/",             .method = HTTP_GET, .handler = index_handler },
         { .uri = "/snapshot.jpg", .method = HTTP_GET, .handler = snapshot_jpg_handler },
         { .uri = "/snapshot.raw", .method = HTTP_GET, .handler = snapshot_raw_handler },
+        { .uri = "/",             .method = HTTP_GET, .handler = index_handler },
         { .uri = "/bench",        .method = HTTP_GET, .handler = bench_handler },
         { .uri = "/stats",        .method = HTTP_GET, .handler = stats_handler },
     };
-    /* The first three entries (page, still, raw) need the camera; bench and stats do not. */
-    const size_t first_uri = with_camera ? 0 : 3;
+    /* The first two entries (still, raw) need the camera; the page, bench and stats do not. */
+    const size_t first_uri = with_camera ? 0 : 2;
     const size_t n_uris = sizeof(uris) / sizeof(uris[0]);
     /* The default of 8 does not hold the five above plus the modules'. A
      * handler over the limit is refused, and the URI then quietly 404s. */
