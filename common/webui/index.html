@@ -111,6 +111,7 @@ $('view').onerror=()=>{$('pinfo').textContent='プレビューに接続できま
 $('sq').addEventListener('input',()=>{$('sqv').textContent=$('sq').value;put('sq',$('sq').value)});
 $('pq').addEventListener('input',()=>$('pqv').textContent=$('pq').value);
 let busy=false;
+const stamp=d=>d.toISOString().replace(/[:.]/g,'-').slice(0,19);   // 写真のファイル名 (UTC)
 async function shutter(){
   if(busy)return; busy=true; $('shot').disabled=true; $('msg').className=''; $('msg').textContent='撮影中…';
   $('view').removeAttribute('src');   // プレビューを止めて、静止画に帯域を譲る
@@ -120,7 +121,7 @@ async function shutter(){
     if(!r.ok)throw new Error(r.status+' '+r.statusText);
     const blob=await r.blob();
     const sec=((performance.now()-t0)/1000).toFixed(1);
-    const name=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19)+'.jpg';
+    const name=stamp(new Date())+'.jpg';
     shots.unshift({name,url:URL.createObjectURL(blob)});
     if(shots.length>12)URL.revokeObjectURL(shots.pop().url);
     $('msg').className='ok';
@@ -290,5 +291,31 @@ const shots=[];   // この画面で撮った写真 (ブラウザのメモリ上
 function renderGallery(){
   $('gal').innerHTML=shots.map(s=>`<a href="${s.url}" download="${s.name}" title="${s.name} (クリックで保存)"><img src="${s.url}"></a>`).join('');
 }
-startPreview(); loadCaps(); pollLight();
+// ---- 物理ボタンで撮った写真 ----
+// ボタンはボードが照明を点けて撮り、ボードに最新 4 枚まで貯める (/shot/info, /shot.jpg)。
+// 開いている画面がそれを見張り、新しい写真を取り込んで上の一覧に加える。
+// 画面を開く前から貯まっていた写真は取り込まない。ボードが再起動したら (boot が変わる)、
+// その後の写真はすべて新しい。
+let shotBoot=null, shotSeen=0;
+async function pollShots(){
+  try{
+    const info=await api('GET','/shot/info');
+    if(info.boot!==shotBoot){ shotSeen=shotBoot===null?info.done:0; shotBoot=info.boot }
+    for(const s of info.shots){
+      if(s.id<=shotSeen)continue;
+      shotSeen=s.id;
+      const r=await fetch(`/shot.jpg?id=${s.id}`);
+      if(!r.ok)continue;                       // 取り込む前にリングから押し出された
+      const blob=await r.blob();
+      const name=stamp(new Date(Date.now()-s.age_ms))+'-button.jpg';
+      shots.unshift({name,url:URL.createObjectURL(blob)});
+      if(shots.length>12)URL.revokeObjectURL(shots.pop().url);
+      renderGallery();
+      $('msg').className='ok';
+      $('msg').textContent=`ボタンで撮影: ${name}  ${(blob.size/1000).toFixed(0)} kB${s.light?'':'  (照明なし)'}`;
+    }
+  }catch(e){}   // 古いファームやボードの再起動中は黙って次を待つ
+  setTimeout(pollShots,1500);
+}
+startPreview(); loadCaps(); pollLight(); pollShots();
 </script></html>
