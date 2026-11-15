@@ -69,11 +69,19 @@ bool camctl_any_auto(void);
  */
 void camctl_saved_orientation(bool *hflip, bool *vflip);
 
-/* Adds GET/POST /ctrl, GET /ctrl/caps, POST /af, POST /wb/onepush and POST /config/reset. */
+/*
+ * The shot settings (shot_q, shot_light in /ctrl and in presets): what the
+ * button and POST /shot without q= / light= use. Leaves the arguments as they
+ * are when camctl never started (no camera).
+ */
+void camctl_shot_settings(int *quality, bool *light);
+
+/* Adds GET/POST /ctrl, GET /ctrl/caps, POST /af, POST /wb/onepush, POST /config/reset,
+ * GET /presets and POST /presets/{save,load,delete,rename}. */
 esp_err_t camctl_register_http(httpd_handle_t server);
 
 /* Number of URI handlers camctl_register_http() adds, for max_uri_handlers. */
-#define CAMCTL_URI_COUNT 6
+#define CAMCTL_URI_COUNT 11
 
 #ifdef __cplusplus
 }

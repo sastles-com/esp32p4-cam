@@ -38,6 +38,11 @@
  #wbbox{position:absolute;left:37.5%;top:37.5%;width:25%;height:25%;border:1px dashed #fff8;pointer-events:none;display:none}
  #lt{margin-top:14px;border-top:1px solid #8884;padding-top:4px}
  #lt .sw button:disabled{opacity:.4;cursor:default}
+ #pre{margin-top:14px;border-top:1px solid #8884;padding-top:4px}
+ .pbtns{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+ .pbtns button{padding:4px 10px;border:1px solid #8886;border-radius:7px;background:transparent;color:var(--fg);font:inherit;font-size:12px;cursor:pointer}
+ .pbtns button:disabled{opacity:.4;cursor:default}
+ #pmod{color:var(--bad);font-size:12px}
  #reset{color:var(--mut);font-size:11px;background:none;border:0;padding:0;margin-top:8px;cursor:pointer;text-decoration:underline}
 </style>
 <main>
@@ -53,8 +58,13 @@
    <option value="12">1440×792</option><option value="16">1920×1080</option></select>
   <label for="pq">プレビューの画質 <span id="pqv"></span></label>
   <input id="pq" type="range" min="10" max="95" value="50">
-  <label for="sq">シャッターの画質 <span id="sqv"></span></label>
-  <input id="sq" type="range" min="50" max="100" value="100">
+  <div id="pre" style="display:none">
+   <div class="row"><h3>プリセット (試験片ごとの設定)</h3><span id="pmod"></span></div>
+   <select id="preset"></select>
+   <div class="pbtns"><button id="psave" title="今の設定を、選んでいるプリセットに上書きする">上書き保存</button>
+    <button id="psaveas">名前を付けて保存</button><button id="pren">名前変更</button><button id="pdel">削除</button></div>
+   <div class="hint">露出・ゲイン・ピント・WB・向き・撮影の画質と照明を保存します。プレビューのサイズと画質は含みません。</div>
+  </div>
   <div id="lt">
    <div class="row"><h3>照明</h3>
     <span class="sw" id="ltsw"><button data-v="on" disabled>ON</button><button data-v="off" disabled>OFF</button></span></div>
@@ -82,6 +92,10 @@
    <input id="wbb" type="range" min="300" max="3999" value="1500">
    <div class="af"><button id="wbbtn" title="白い紙などを点線の枠に写して押す">白を合わせる</button><span class="hint" id="wbv" style="margin:0"></span></div>
    </div>
+   <div class="row"><h3>撮影</h3>
+    <label class="chk" title="シャッター (画面・物理ボタン) で照明を点けて撮る"><input id="slight" type="checkbox" checked>照明を点けて撮る</label></div>
+   <label for="sq">画質 <span class="val" id="sqv">–</span></label>
+   <input id="sq" type="range" min="10" max="100" value="95">
    <div class="row" id="orirow"><h3>向き</h3>
     <span style="display:inline-flex;gap:10px"><label class="chk"><input id="hflip" type="checkbox">左右反転</label>
      <label class="chk"><input id="vflip" type="checkbox">上下反転</label></span></div>
@@ -94,7 +108,7 @@
 <script>
 const $=id=>document.getElementById(id), LS=window.localStorage||{};
 const get=(k,d)=>{try{return LS.getItem(k)??d}catch(e){return d}}, put=(k,v)=>{try{LS.setItem(k,v)}catch(e){}};
-$('n').value=get('n','8'); $('pq').value=get('pq','50'); $('sq').value=get('sq','100');
+$('n').value=get('n','8'); $('pq').value=get('pq','50');
 // プレビューは別ポート (:81) の MJPEG。この画面はボード自身が配信しているので、アドレスは location から。
 // 別の中継 (USB ブリッジなど) が同じ画面を配信する場合は、window.STREAM_URL で上書きできる。
 function previewUrl(){
@@ -102,30 +116,56 @@ function previewUrl(){
   return `${base}?q=${$('pq').value}&n=${$('n').value}`;
 }
 function startPreview(){
-  ['n','pq','sq'].forEach(k=>put(k,$(k).value));
-  $('pqv').textContent=$('pq').value; $('sqv').textContent=$('sq').value;
+  ['n','pq'].forEach(k=>put(k,$(k).value));
+  $('pqv').textContent=$('pq').value;
   $('view').src=previewUrl(); $('pinfo').textContent='プレビュー中';
 }
 $('view').onerror=()=>{$('pinfo').textContent='プレビューに接続できません(この端末とボードが同じネットワークか確認)'};
 ['n','pq'].forEach(k=>$(k).addEventListener('change',startPreview));
-$('sq').addEventListener('input',()=>{$('sqv').textContent=$('sq').value;put('sq',$('sq').value)});
 $('pq').addEventListener('input',()=>$('pqv').textContent=$('pq').value);
 let busy=false;
 const stamp=d=>d.toISOString().replace(/[:.]/g,'-').slice(0,19);   // 写真のファイル名 (UTC)
+// 物理ボタンと同じ撮影 (POST /shot): ボードが照明を点け、明るさが落ち着いてから撮って消す。
+// 照明を画面のスイッチで点けたままなら、そのまま撮る。撮った写真はボードに貯まるので取りに行く。
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+// 画質と照明はボードの設定 (撮影の欄、プリセットに含まれる) を使う。
+async function takeShot(){
+  const r=await fetch('/shot',{method:'POST'});
+  if(r.status===404)return null;                      // /shot の無い古いファーム
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error||r.status+' '+r.statusText);
+  $('msg').textContent='撮影中… (照明)';
+  for(const t0=Date.now();;){
+    const info=await api('GET','/shot/info');
+    if(info.done>=j.id){
+      const s=info.shots.find(s=>s.id===j.id);
+      if(!s)throw new Error('写真が残っていません');
+      const p=await fetch(`/shot.jpg?id=${j.id}`);
+      if(!p.ok)throw new Error(p.status+' '+p.statusText);
+      return {blob:await p.blob(),light:s.light};
+    }
+    if(Date.now()-t0>20000)throw new Error('撮影が終わりません');
+    await sleep(250);
+  }
+}
 async function shutter(){
   if(busy)return; busy=true; $('shot').disabled=true; $('msg').className=''; $('msg').textContent='撮影中…';
   $('view').removeAttribute('src');   // プレビューを止めて、静止画に帯域を譲る
   try{
     const t0=performance.now();
-    const r=await fetch(`/snapshot.jpg?q=${$('sq').value}`);
-    if(!r.ok)throw new Error(r.status+' '+r.statusText);
-    const blob=await r.blob();
+    let shot=await takeShot();
+    if(!shot){
+      const r=await fetch(`/snapshot.jpg?q=${$('sq').value}`);
+      if(!r.ok)throw new Error(r.status+' '+r.statusText);
+      shot={blob:await r.blob(),light:false};
+    }
+    const blob=shot.blob;
     const sec=((performance.now()-t0)/1000).toFixed(1);
     const name=stamp(new Date())+'.jpg';
     shots.unshift({name,url:URL.createObjectURL(blob)});
     if(shots.length>12)URL.revokeObjectURL(shots.pop().url);
     $('msg').className='ok';
-    $('msg').textContent=`${name}  ${(blob.size/1000).toFixed(0)} kB  ${sec} 秒`;
+    $('msg').textContent=`${name}  ${(blob.size/1000).toFixed(0)} kB  ${sec} 秒${shot.light?'':'  (照明なし)'}`;
     renderGallery();
   }catch(e){$('msg').className='bad';$('msg').textContent='失敗: '+e.message}
   busy=false; $('shot').disabled=false; startPreview();
@@ -184,6 +224,12 @@ function render(s){
     $('wbbtn').disabled=wbBusy;
     $('wbv').textContent=wbBusy?'合わせています…':s.wb_state==='done'?'白を合わせました':s.wb_state==='failed'?'合わせられませんでした (枠に白いものを写して再試行)':'';
   }
+  if('shot_q' in s){
+    if(!fresh('sq'))$('sq').value=s.shot_q;
+    $('sqv').textContent=fresh('sq')?$('sq').value:s.shot_q;
+    $('slight').checked=!!s.shot_light;
+  }
+  renderPresetState(s);
   // 向き: 古いファームは hflip を返さないので行ごと隠す。再起動待ちの間は表示を変えない
   $('orirow').style.display=('hflip' in s)?'':'none';
   if(!flipping){ $('hflip').checked=!!s.hflip; $('vflip').checked=!!s.vflip }
@@ -224,6 +270,8 @@ slider('gain',()=>({gain_index:+$('gain').value}));
 slider('foc',()=>({focus_pos:+$('foc').value}));
 slider('wbr',()=>({wb_red:+$('wbr').value}));
 slider('wbb',()=>({wb_blue:+$('wbb').value}));
+slider('sq',()=>({shot_q:+$('sq').value}));
+$('slight').onchange=()=>{$('slight').blur(); send({shot_light:$('slight').checked?1:0})};
 $('wbbtn').onclick=async()=>{
   $('wbbtn').blur();
   try{ await api('POST','/wb/onepush'); $('wbbtn').disabled=true; $('wbv').textContent='合わせています…'; setTimeout(poll,300) }
@@ -242,7 +290,7 @@ function renderLight(j){
   for(const b of $('ltsw').children)b.disabled=!ok;
   setSw('ltsw',ok?(j.light?'on':'off'):'');
   $('ltv').className='hint'+(ok?'':' bad');
-  $('ltv').textContent=ok?(j.light?'点灯中 (撮影しても点いたまま)':'消灯中 (撮影の間だけ点く)'):'照明ボード (MCP23017) が見つかりません';
+  $('ltv').textContent=ok?(j.light?'点灯中 (撮影しても点いたまま)':st&&st.shot_light===false?'消灯中 (撮影でも点けない設定)':'消灯中 (撮影の間だけ点く)'):'照明ボード (MCP23017) が見つかりません';
 }
 async function pollLight(){
   clearTimeout(ltTimer);
@@ -276,7 +324,7 @@ async function waitBoard(){
 $('hflip').onchange=()=>setFlip('hflip');
 $('vflip').onchange=()=>setFlip('vflip');
 $('reset').onclick=async()=>{
-  if(!confirm('保存された露出・ピント・ホワイトバランス・向きの設定を消して、Auto に戻しますか?'))return;
+  if(!confirm('露出・ピント・ホワイトバランス・向き・撮影の設定を消して、Auto と既定値に戻しますか? (プリセットは消えません)'))return;
   const wasFlipped=st&&(st.hflip||st.vflip);
   try{ render(await api('POST','/config/reset')); cmsg('設定をリセットしました','ok') }
   catch(e){ cmsg('リセットできません: '+e.message,'bad'); return }
@@ -285,6 +333,72 @@ $('reset').onclick=async()=>{
     $('ctl').classList.add('off'); cmsg('向きを戻すため、ボードを再起動しています…','ok');
     await waitBoard(); flipping=false; startPreview(); loadCaps();
   }
+};
+// ---- プリセット (ボードに保存。/presets) ----
+// 選ぶとその設定を読み込む。向きが違うプリセットはボードの再起動で反映する。
+let presets=[], presetBusy=false;
+function renderPresets(){
+  const sel=$('preset'), act=st&&st.preset;
+  sel.innerHTML='<option value="">(プリセットなし)</option>'+presets.map(p=>{
+    const n=p.name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+    return `<option value="${n}">${n}</option>`}).join('');
+  sel.value=act&&presets.some(p=>p.name===act)?act:'';
+  renderPresetState(st);
+}
+function renderPresetState(s){
+  if(!s||!('preset' in s))return;
+  const act=s.preset, known=act&&presets.some(p=>p.name===act);
+  if(act&&!known&&!presetBusy){loadPresets();return}   // 他の画面で作られた
+  if(document.activeElement!==$('preset'))$('preset').value=known?act:'';
+  $('pmod').textContent=act&&s.preset_modified?'変更あり (未保存)':'';
+  $('psave').disabled=$('pren').disabled=$('pdel').disabled=!known||presetBusy;
+}
+let presetsLoading=false;
+async function loadPresets(){
+  if(presetsLoading)return; presetsLoading=true;
+  try{ const j=await api('GET','/presets'); presets=j.presets; $('pre').style.display=''; renderPresets() }
+  catch(e){ $('pre').style.display='none' }   // 古いファーム
+  presetsLoading=false;
+}
+async function presetOp(fn,okMsg){
+  presetBusy=true; renderPresetState(st);
+  try{ const j=await fn(); if(j&&j.presets)presets=j.presets; await poll(); renderPresets(); if(okMsg)cmsg(okMsg,'ok') }
+  catch(e){ cmsg('プリセット: '+e.message,'bad'); renderPresets() }
+  presetBusy=false; renderPresetState(st);
+}
+$('preset').onchange=async()=>{
+  const sel=$('preset'), name=sel.value; sel.blur();
+  if(!name){ renderPresets(); return }        // 「なし」は選ぶだけでは何も変えない
+  if(st&&st.preset_modified&&!confirm(`「${st.preset}」の変更は保存されていません。「${name}」を読み込みますか?`)){renderPresets();return}
+  const p=presets.find(p=>p.name===name);
+  const reorient=p&&st&&(('hflip' in p&&p.hflip!==st.hflip)||('vflip' in p&&p.vflip!==st.vflip));
+  if(reorient&&!confirm(`「${name}」は向きが違うため、ボードを再起動して反映します（数秒かかります）。読み込みますか?`)){renderPresets();return}
+  if(!reorient){ await presetOp(()=>api('POST','/presets/load',{name}),`「${name}」を読み込みました`); return }
+  try{ await api('POST','/presets/load',{name}) }catch(e){ cmsg('プリセット: '+e.message,'bad'); renderPresets(); return }
+  flipping=true; clearTimeout(pollTimer); $('view').removeAttribute('src');
+  $('ctl').classList.add('off'); cmsg(`「${name}」の向きにするため、ボードを再起動しています…`,'ok');
+  await waitBoard(); flipping=false; startPreview(); await loadCaps(); loadPresets();
+};
+$('psave').onclick=()=>{
+  $('psave').blur(); const name=st&&st.preset; if(!name)return;
+  if(!confirm(`今の設定で「${name}」を上書きしますか?`))return;
+  presetOp(()=>api('POST','/presets/save',{name}),`「${name}」に保存しました`);
+};
+$('psaveas').onclick=()=>{
+  $('psaveas').blur();
+  const name=(prompt('プリセットの名前 (試験片の種類など)',st&&st.preset||'')||'').trim(); if(!name)return;
+  if(presets.some(p=>p.name===name)&&!confirm(`「${name}」はもうあります。上書きしますか?`))return;
+  presetOp(()=>api('POST','/presets/save',{name}),`「${name}」として保存しました`);
+};
+$('pren').onclick=()=>{
+  $('pren').blur(); const name=st&&st.preset; if(!name)return;
+  const to=(prompt(`「${name}」の新しい名前`,name)||'').trim(); if(!to||to===name)return;
+  presetOp(()=>api('POST','/presets/rename',{name,to}),`「${to}」に名前を変えました`);
+};
+$('pdel').onclick=()=>{
+  $('pdel').blur(); const name=st&&st.preset; if(!name)return;
+  if(!confirm(`プリセット「${name}」を削除しますか? (今の設定はそのまま)`))return;
+  presetOp(()=>api('POST','/presets/delete',{name}),`「${name}」を削除しました`);
 };
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!/INPUT|SELECT/.test(document.activeElement.tagName)){e.preventDefault();shutter()}});
 const shots=[];   // この画面で撮った写真 (ブラウザのメモリ上。ページを閉じると消える)
@@ -304,6 +418,7 @@ async function pollShots(){
     for(const s of info.shots){
       if(s.id<=shotSeen)continue;
       shotSeen=s.id;
+      if(s.src!=='button')continue;            // 画面のシャッター (/shot) の分は shutter() が取り込む
       const r=await fetch(`/shot.jpg?id=${s.id}`);
       if(!r.ok)continue;                       // 取り込む前にリングから押し出された
       const blob=await r.blob();
@@ -317,5 +432,5 @@ async function pollShots(){
   }catch(e){}   // 古いファームやボードの再起動中は黙って次を待つ
   setTimeout(pollShots,1500);
 }
-startPreview(); loadCaps(); pollLight(); pollShots();
+startPreview(); loadCaps(); loadPresets(); pollLight(); pollShots();
 </script></html>

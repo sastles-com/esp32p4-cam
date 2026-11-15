@@ -4,7 +4,7 @@
 この PC のサーバーを通して、ブラウザや他のプログラムからカメラを操作する。
 
 - 対象: usb-app ファーム（トンネル版 2）と、このリポジトリの `usb-app/pc`
-- 最終更新: 2026-11-12
+- 最終更新: 2026-11-13（プリセット、撮影設定 `shot_q`・`shot_light` を追加）
 
 ## 1. 概要
 
@@ -113,7 +113,8 @@ Web 画面（`common/webui/index.html`）。プレビューの URL を `/stream.
   "focus_pos": 560, "af_state": "done", "af_score": 366, "af_ms": 3181,
   "wb_mode": "manual", "wb_red": 1820, "wb_blue": 1918, "wb_state": "idle",
   "hflip": false, "vflip": false,
-  "shutter_priority": "B", "config": "loaded"
+  "shutter_priority": "B", "shot_q": 95, "shot_light": true,
+  "preset": "試験片A", "preset_modified": false, "config": "loaded"
 }
 ```
 
@@ -128,6 +129,9 @@ Web 画面（`common/webui/index.html`）。プレビューの URL を `/stream.
 | `wb_state` | ワンプッシュ WB の状態。`idle` / `running` / `done` / `failed` |
 | `hflip`, `vflip` | 左右反転、上下反転 |
 | `shutter_priority` | シャッター優先の方式（`A` または `B`。通常は `B`） |
+| `shot_q`, `shot_light` | 撮影の設定。物理ボタンと、`q`・`light` を省いた `POST /shot` が使う JPEG 品質と照明（4.3） |
+| `preset` | 最後に読み込んだ / 保存したプリセットの名前。無ければ `null`（4.5） |
+| `preset_modified` | その後に設定を変えたか（未保存の変更あり） |
 | `config` | 設定ファイルの状態。`loaded` / `default` / `error` |
 
 #### `POST /ctrl?key=value&…`
@@ -147,6 +151,10 @@ Web 画面（`common/webui/index.html`）。プレビューの URL を `/stream.
 | `wb_red`, `wb_blue` | 300〜3999 | manual 時の WB ゲイン（1000 = ×1.0） |
 | `sp` | `A` / `B` | シャッター優先の方式 |
 | `hflip`, `vflip` | `0` / `1` | 左右反転、上下反転。**変えるとすぐ保存し、ボードを再起動する**（2.4） |
+| `shot_q` | 1〜100 | 撮影の JPEG 品質（範囲外は丸める） |
+| `shot_light` | `0` / `1` | 撮影で照明を点けるか |
+
+- どのキーを変えても、プリセットを選んでいれば `preset_modified` が `true` になる。
 
 - 知らないキーが 1 つでもあると、何も変えずに 400 `{"error":"unknown key"}`。
 - 値の形が違うと 400（例: `{"error":"focus_pos must be an integer"}`）。
@@ -184,8 +192,9 @@ AF を 1 回走らせる（ピントを auto にする）。`202 {"af_state":"ru
 
 #### `POST /config/reset`
 
-保存した設定（露出、ピント、WB、向き）を消し、すべて auto・反転なしに戻す。応答は戻した後の状態。
-向きが設定されていた場合は、ボードが再起動する（2.4）。
+保存した設定（露出、ピント、WB、向き、撮影設定、シャッター優先の方式）を消し、すべて auto・反転なし・
+`shot_q=95`・`shot_light=true` に戻す。選んでいるプリセットは外れる（`preset` が `null`）が、
+プリセット自体は消えない。応答は戻した後の状態。向きが設定されていた場合は、ボードが再起動する（2.4）。
 
 ### 4.2 静止画
 
@@ -208,8 +217,11 @@ AF を 1 回走らせる（ピントを auto にする）。`202 {"af_state":"ru
 
 | クエリ | 既定 | 意味 |
 |---|---|---|
-| `q` | 95 | JPEG 品質 1〜100 |
-| `light` | 1 | `0` で照明を点けずに撮る |
+| `q` | ボードの `shot_q`（初期値 95） | JPEG 品質 1〜100 |
+| `light` | ボードの `shot_light`（初期値 1） | `0` で照明を点けずに撮る、`1` で点ける |
+
+省くとボードの撮影設定（`/ctrl` の `shot_q`・`shot_light`、プリセットに含まれる）で撮る。物理ボタンも同じ設定で撮る。
+照明を `POST /io?light=1` で点けたままなら、点け直さず・待たずにそのまま撮る。
 
 `202 {"id": 7}` で受け付け、撮影は裏で進む。撮影待ちが詰まっていると `409 {"error":"shot queue full"}`、
 カメラが無いと 503。
@@ -267,7 +279,57 @@ AF を 1 回走らせる（ピントを auto にする）。`202 {"af_state":"ru
 照明ボードが無い・応答しないと `503 {"error":"MCP23017 not responding"}`。値が違うと 400。
 照明を点けたまま `/shot` や `/snapshot.jpg` を撮ると、点いたまま撮る（撮影後も消えない）。
 
-### 4.5 診断
+### 4.5 プリセット（試験片ごとの設定）
+
+撮影の設定一式に名前を付けて、ボードのフラッシュ（`/cfg/presets.json`）に保存する。再起動しても残る。
+カメラが無いと 404。
+
+プリセットが持つ項目: `exposure_mode`, `exposure_us`, `gain_mode`, `gain_index`, `focus_mode`, `focus_pos`,
+`wb_mode`, `wb_red`, `wb_blue`, `hflip`, `vflip`, `sp`, `shot_q`, `shot_light`（`POST /ctrl` のキーと同じ）。
+照明の今の ON/OFF（`/io`）と、プレビューのサイズ・画質（ブラウザ側）は含まない。
+
+名前: UTF-8 で 1〜48 バイト（漢字なら 16 文字）。制御文字、`"`、`\` は使えない。クエリでは URL エンコードする。
+違反は 400 `{"error":"name must be 1-48 bytes of text, without \" or \\"}`。最大 20 個。
+
+#### `GET /presets`
+
+```json
+{
+  "active": "試験片A", "modified": false, "max": 20,
+  "presets": [
+    {"name": "試験片A", "exposure_mode": "manual", "exposure_us": 401, "gain_mode": "manual", "gain_index": 46,
+     "focus_mode": "manual", "focus_pos": 720, "wb_mode": "manual", "wb_red": 1907, "wb_blue": 1869,
+     "hflip": false, "vflip": false, "sp": "B", "shot_q": 80, "shot_light": true}
+  ]
+}
+```
+
+`active` は選んでいるプリセット（`/ctrl` の `preset` と同じ）、`modified` はその後の変更の有無。
+`presets` は最初に保存した順。
+
+#### `POST /presets/save?name=…`
+
+今の設定をその名前で保存する（同じ名前があれば上書き、順番はそのまま）。保存したプリセットが選ばれた状態
+（`modified=false`）になる。応答は `GET /presets` と同じ形。20 個あって新しい名前なら 409 `too many presets`。
+
+#### `POST /presets/load?name=…`
+
+プリセットの全項目を適用する。応答は `GET /ctrl` と同じ形（適用後の状態）。無ければ 404 `no such preset`。
+
+- ピントが `auto` のプリセットは、読み込むたびに AF を 1 回走らせる（試験片が替わるため）。
+- **向き（`hflip`・`vflip`）が今と違うプリセットは、保存してボードを再起動する**（2.4。約 3 秒 503）。
+  再起動後はそのプリセットの設定で起動し、`preset` も保たれる。クライアントは読み込む前に、
+  `GET /presets` の値と今の `hflip`・`vflip` を比べれば再起動になるか分かる。
+
+#### `POST /presets/delete?name=…`
+
+削除する。今の設定は変えない。選んでいたプリセットなら `active` が `null` になる。応答は `GET /presets` と同じ形。
+
+#### `POST /presets/rename?name=…&to=…`
+
+名前を変える。`to` が別のプリセットにあれば 409 `a preset with that name exists`。応答は `GET /presets` と同じ形。
+
+### 4.6 診断
 
 #### `GET /stats`
 
@@ -300,6 +362,9 @@ curl -X POST $B/af
 curl -X POST "$B/io?light=1"
 curl -o shot.jpg "$B/snapshot.jpg?q=95"
 curl -X POST "$B/io?light=0"
+curl -X POST "$B/presets/save" --data-urlencode "name=試験片A" -G   # 今の設定を保存
+curl -X POST "$B/presets/load" --data-urlencode "name=試験片A" -G   # 読み込む
+curl -X POST $B/shot                                                # その設定で撮る
 ```
 
 ```python

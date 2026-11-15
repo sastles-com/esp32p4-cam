@@ -233,7 +233,10 @@ static void button_task(void *arg)
             continue;
         }
         uint32_t id = 0;
-        if (request(BUTTON_QUALITY, true, "button", &id)) ESP_LOGI(TAG, "button: shot %" PRIu32 " queued", id);
+        int quality = BUTTON_QUALITY;
+        bool light = true;
+        camctl_shot_settings(&quality, &light);     /* the preset's, if one is loaded */
+        if (request(quality, light, "button", &id)) ESP_LOGI(TAG, "button: shot %" PRIu32 " queued", id);
     }
 }
 
@@ -297,6 +300,7 @@ static esp_err_t shot_post_handler(httpd_req_t *req)
 {
     int quality = BUTTON_QUALITY;
     bool light = true;
+    camctl_shot_settings(&quality, &light);         /* defaults; the query overrides */
     char q[48] = "", v[8];
     httpd_req_get_url_query_str(req, q, sizeof(q));
     if (httpd_query_key_value(q, "q", v, sizeof(v)) == ESP_OK) {

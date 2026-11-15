@@ -6,6 +6,7 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
 #include <math.h>
 #include <inttypes.h>
@@ -96,7 +97,20 @@ static const char *TAG = "camctl";
 #define CFG_PARTITION       "storage"
 #define CFG_FILE            CFG_BASE "/config.json"
 #define CFG_TMP             CFG_BASE "/config.json.tmp"
+/* Version 1 throughout: later keys (sp, shot_q, shot_light, preset) are optional,
+ * so files written before them still load. */
 #define CFG_VERSION         1
+/* config.json and presets.json are read whole; anything bigger is not ours. */
+#define CFG_READ_MAX        (24 * 1024)
+
+#define PRESETS_FILE        CFG_BASE "/presets.json"
+#define PRESETS_TMP         CFG_BASE "/presets.json.tmp"
+/* Name: 1..PRESET_NAME_MAX bytes of UTF-8 (16 kanji fit), no control characters,
+ * no " or \. At ~400 bytes each, PRESETS_MAX keep presets.json near 8 kB. */
+#define PRESET_NAME_MAX     48
+#define PRESETS_MAX         20
+
+#define SHOT_Q_DEFAULT      95
 
 #define GAIN_MENU_MAX       64
 
@@ -115,7 +129,17 @@ static struct {
     cmode_t wb_mode;
     int32_t wb_red, wb_blue;    /* milli; in auto, where the loop has got to */
     bool hflip, vflip;          /* applied at boot only - see camctl_saved_orientation() */
-} s_cfg = { M_AUTO, M_AUTO, M_AUTO, 0, 0, 512, M_AUTO, WB_DEFAULT, WB_DEFAULT, false, false };
+    int32_t shot_q;             /* JPEG quality of a shot (button, POST /shot without q) */
+    bool shot_light;            /* a shot switches the light on */
+} s_cfg = { M_AUTO, M_AUTO, M_AUTO, 0, 0, 512, M_AUTO, WB_DEFAULT, WB_DEFAULT, false, false,
+            SHOT_Q_DEFAULT, true };
+
+/* Presets (§ presets in usb-app/API.md): named copies of s_cfg in presets.json.
+ * s_preset is the one last loaded or saved ("" = none); s_preset_modified goes
+ * true when the user changes anything after that. Both live in config.json, so
+ * the page shows the same after a restart. */
+static char s_preset[PRESET_NAME_MAX + 1];
+static bool s_preset_modified;
 
 /* What the hardware allows, read once at init. */
 static struct {
@@ -540,13 +564,10 @@ static bool wb_onepush_start_locked(void)
 
 /* ---- Persistence (§3.6) ------------------------------------------------- */
 
-static void save_now(void)
+/* The settings a preset holds - the same keys as config.json and POST /ctrl.
+ * Call with s_lock held. */
+static void settings_to_json_locked(cJSON *o)
 {
-    if (!s_fs_ok) return;
-
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    cJSON *o = cJSON_CreateObject();
-    cJSON_AddNumberToObject(o, "version", CFG_VERSION);
     cJSON_AddStringToObject(o, "exposure_mode", mode_str(s_cfg.exp_mode));
     cJSON_AddStringToObject(o, "gain_mode", mode_str(s_cfg.gain_mode));
     cJSON_AddNumberToObject(o, "exposure_us", lines_to_us(s_cfg.exp_lines));
@@ -558,20 +579,40 @@ static void save_now(void)
     cJSON_AddNumberToObject(o, "wb_blue", s_cfg.wb_blue);
     cJSON_AddBoolToObject(o, "hflip", s_cfg.hflip);
     cJSON_AddBoolToObject(o, "vflip", s_cfg.vflip);
+    char sp[2] = { s_sp_method, 0 };
+    cJSON_AddStringToObject(o, "sp", sp);
+    cJSON_AddNumberToObject(o, "shot_q", s_cfg.shot_q);
+    cJSON_AddBoolToObject(o, "shot_light", s_cfg.shot_light);
+}
+
+/* tmp then rename: LittleFS renames atomically over an existing name, so a
+ * power cut mid-write leaves the old file intact. */
+static bool write_file(const char *tmp, const char *path, const char *text)
+{
+    FILE *f = fopen(tmp, "w");
+    bool ok = f && fputs(text, f) >= 0;
+    if (f) ok = (fclose(f) == 0) && ok;
+    return ok && rename(tmp, path) == 0;
+}
+
+static void save_now(void)
+{
+    if (!s_fs_ok) return;
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddNumberToObject(o, "version", CFG_VERSION);
+    settings_to_json_locked(o);
+    if (s_preset[0]) {
+        cJSON_AddStringToObject(o, "preset", s_preset);
+        cJSON_AddBoolToObject(o, "preset_modified", s_preset_modified);
+    }
     xSemaphoreGive(s_lock);
 
     char *text = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     if (!text) return;
-
-    /* tmp then rename: LittleFS renames atomically over an existing name, so a
-     * power cut mid-write leaves the old config.json intact. */
-    FILE *f = fopen(CFG_TMP, "w");
-    bool ok = f && fputs(text, f) >= 0;
-    if (f) ok = (fclose(f) == 0) && ok;
-    if (ok) {
-        ok = rename(CFG_TMP, CFG_FILE) == 0;
-    }
+    bool ok = write_file(CFG_TMP, CFG_FILE, text);
     ESP_LOGI(TAG, "config %s: %s", ok ? "saved" : "SAVE FAILED", text);
     cJSON_free(text);
 }
@@ -603,15 +644,68 @@ static bool parse_mode(const char *s, cmode_t *out)
     return false;
 }
 
+/* The whole file, parsed. NULL if missing, too big or not JSON. (This read
+ * 512 bytes on the stack once; config.json with a preset name can pass that,
+ * and a cut-off file would put every setting back to default.) */
 static cJSON *read_json(const char *path)
 {
+    struct stat st;
+    if (stat(path, &st) != 0 || st.st_size <= 0) return NULL;
+    if (st.st_size > CFG_READ_MAX) {
+        ESP_LOGW(TAG, "%s is %ld bytes - too big, ignored", path, (long)st.st_size);
+        return NULL;
+    }
     FILE *f = fopen(path, "r");
     if (!f) return NULL;
-    char buf[512];
-    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    char *buf = malloc((size_t)st.st_size + 1);
+    size_t n = buf ? fread(buf, 1, (size_t)st.st_size, f) : 0;
     fclose(f);
+    if (!buf) return NULL;
     buf[n] = '\0';
-    return cJSON_Parse(buf);
+    cJSON *o = cJSON_Parse(buf);
+    free(buf);
+    return o;
+}
+
+/* A preset name as stored and sent: 1..PRESET_NAME_MAX bytes of valid UTF-8,
+ * no control characters, no " or \ (so it is safe inside any JSON we print). */
+static bool preset_name_ok(const char *s)
+{
+    size_t n = strlen(s);
+    if (n == 0 || n > PRESET_NAME_MAX) return false;
+    for (const unsigned char *p = (const unsigned char *)s; *p; ) {
+        unsigned c = *p;
+        int more = c < 0x80 ? 0 : (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2 : (c & 0xF8) == 0xF0 ? 3 : -1;
+        if (more < 0 || (more == 1 && c < 0xC2)) return false;
+        if (more == 0 && (c < 0x20 || c == 0x7F || c == '"' || c == '\\')) return false;
+        p++;
+        for (int i = 0; i < more; i++, p++) {
+            if ((*p & 0xC0) != 0x80) return false;
+        }
+    }
+    return true;
+}
+
+/* Query value of `key`, %XX- and +-decoded, into out (size outsz). False if absent or too long. */
+static bool query_text(const char *q, const char *key, char *out, size_t outsz)
+{
+    char raw[3 * PRESET_NAME_MAX + 8];
+    if (httpd_query_key_value(q, key, raw, sizeof(raw)) != ESP_OK) return false;
+    size_t o = 0;
+    for (const char *p = raw; *p; p++) {
+        char c = *p;
+        if (c == '+') {
+            c = ' ';
+        } else if (c == '%' && isxdigit((unsigned char)p[1]) && isxdigit((unsigned char)p[2])) {
+            char hex[3] = { p[1], p[2], 0 };
+            c = (char)strtol(hex, NULL, 16);
+            p += 2;
+        }
+        if (o + 1 >= outsz) return false;
+        out[o++] = c;
+    }
+    out[o] = '\0';
+    return true;
 }
 
 /* hflip / vflip from a parsed config.json; true and 1 both count. */
@@ -654,6 +748,14 @@ static void load_config(void)
     if ((it = cJSON_GetObjectItem(o, "wb_red")) && cJSON_IsNumber(it)) s_cfg.wb_red = clamp_i32(it->valueint, WB_MIN, WB_MAX);
     if ((it = cJSON_GetObjectItem(o, "wb_blue")) && cJSON_IsNumber(it)) s_cfg.wb_blue = clamp_i32(it->valueint, WB_MIN, WB_MAX);
     read_orientation(o);
+    if ((it = cJSON_GetObjectItem(o, "sp")) && cJSON_IsString(it) &&
+        (!strcmp(it->valuestring, "A") || !strcmp(it->valuestring, "B"))) s_sp_method = it->valuestring[0];
+    if ((it = cJSON_GetObjectItem(o, "shot_q")) && cJSON_IsNumber(it)) s_cfg.shot_q = clamp_i32(it->valueint, 1, 100);
+    if ((it = cJSON_GetObjectItem(o, "shot_light")) && cJSON_IsBool(it)) s_cfg.shot_light = cJSON_IsTrue(it);
+    if ((it = cJSON_GetObjectItem(o, "preset")) && cJSON_IsString(it) && preset_name_ok(it->valuestring)) {
+        strlcpy(s_preset, it->valuestring, sizeof(s_preset));
+        s_preset_modified = cJSON_IsTrue(cJSON_GetObjectItem(o, "preset_modified"));
+    }
     cJSON_Delete(o);
 
     s_config_state = "loaded";
@@ -855,22 +957,32 @@ static esp_err_t send_state(httpd_req_t *req, const char *status)
     cmode_t em = s_cfg.exp_mode, gm = s_cfg.gain_mode, fm = s_cfg.focus_mode, wm = s_cfg.wb_mode;
     int32_t wr = s_cfg.wb_red, wbl = s_cfg.wb_blue;
     bool hf = s_cfg.hflip, vf = s_cfg.vflip;
+    int32_t sq = s_cfg.shot_q;
+    bool sl = s_cfg.shot_light;
+    char preset[PRESET_NAME_MAX + 1];
+    strlcpy(preset, s_preset, sizeof(preset));      /* preset_name_ok: safe to print as is */
+    bool pmod = s_preset_modified;
     xSemaphoreGive(s_lock);
 
     uint32_t gm_milli = (gain >= s_caps.gain_min && gain <= s_caps.gain_max) ? s_caps.gain_milli[gain] : 0;
-    char body[600];
+    char body[800];
     int n = snprintf(body, sizeof(body),
         "{\"exposure_mode\":\"%s\",\"gain_mode\":\"%s\",\"focus_mode\":\"%s\","
         "\"exposure_us\":%" PRIu32 ",\"exposure_lines\":%" PRId32 ","
         "\"gain_index\":%" PRId32 ",\"gain_x\":%" PRIu32 ".%02" PRIu32 ","
         "\"focus_pos\":%d,\"af_state\":\"%s\",\"af_score\":%" PRIu32 ",\"af_ms\":%" PRIu32 ","
         "\"wb_mode\":\"%s\",\"wb_red\":%" PRId32 ",\"wb_blue\":%" PRId32 ",\"wb_state\":\"%s\","
-        "\"hflip\":%s,\"vflip\":%s,\"shutter_priority\":\"%c\",\"config\":\"%s\"}",
+        "\"hflip\":%s,\"vflip\":%s,\"shutter_priority\":\"%c\","
+        "\"shot_q\":%" PRId32 ",\"shot_light\":%s,\"preset\":%s%s%s,\"preset_modified\":%s,"
+        "\"config\":\"%s\"}",
         mode_str(em), mode_str(gm), mode_str(fm),
         exp >= 0 ? lines_to_us(exp) : 0, exp, gain, gm_milli / 1000, (gm_milli % 1000) / 10,
         focus, s_af_names[s_af_state], s_af_score, s_af_ms,
         mode_str(wm), wr, wbl, s_wb_names[s_wb_state], hf ? "true" : "false", vf ? "true" : "false",
-        s_sp_method, s_config_state);
+        s_sp_method, sq, sl ? "true" : "false",
+        preset[0] ? "\"" : "null", preset, preset[0] ? "\"" : "", pmod ? "true" : "false",
+        s_config_state);
+    if (n < 0 || n >= (int)sizeof(body)) return send_error(req, "500 Internal Server Error", "state too long");
     return send_json(req, status, body, n);
 }
 
@@ -904,47 +1016,62 @@ static esp_err_t caps_handler(httpd_req_t *req)
     return send_json(req, NULL, body, n);
 }
 
-/* POST /ctrl?key=value... - only the keys given change (§3.5). */
-static esp_err_t ctrl_post_handler(httpd_req_t *req)
-{
-    char q[256] = "", v[16];
-    size_t ql = httpd_req_get_url_query_len(req);
-    if (ql >= sizeof(q)) return send_error(req, "400 Bad Request", "query too long");
-    if (ql) httpd_req_get_url_query_str(req, q, sizeof(q));
+/* Settings to change; each has_ flag (or sp != 0, hf/vf >= 0) says the value
+ * was given. POST /ctrl fills one from its query and a preset load from
+ * presets.json, so both go through settings_apply(). */
+typedef struct {
+    bool has_em, has_gm, has_fm, has_eu, has_gi, has_fp, has_wm, has_wr, has_wb, has_sq, has_sl;
+    cmode_t em, gm, fm, wm;
+    long eu, gi, fp, wr, wbl, sq;
+    bool sl;
+    char sp;            /* 'A' / 'B', 0 = not given */
+    int hf, vf;         /* 0 / 1, -1 = not given */
+    bool force_af;      /* run AF when focus ends up auto, even if it was auto already */
+} settings_t;
 
-    /* Parse everything before touching anything, so a bad key changes nothing. */
+#define SETTINGS_NONE { .hf = -1, .vf = -1 }
+
+static bool settings_any(const settings_t *s)
+{
+    return s->has_em || s->has_gm || s->has_fm || s->has_eu || s->has_gi || s->has_fp || s->has_wm ||
+           s->has_wr || s->has_wb || s->has_sq || s->has_sl || s->sp || s->hf >= 0 || s->vf >= 0;
+}
+
+/* A /ctrl query. NULL if fine, else the message for a 400. Nothing is applied
+ * here, so a bad key changes nothing. */
+static const char *settings_from_query(const char *q, settings_t *s)
+{
     static const char *const known[] = { "exposure_mode", "gain_mode", "exposure_us",
                                          "gain_index", "focus_mode", "focus_pos",
-                                         "wb_mode", "wb_red", "wb_blue", "sp", "hflip", "vflip" };
-    for (char *p = q; *p; ) {
-        char *amp = strchr(p, '&');
+                                         "wb_mode", "wb_red", "wb_blue", "sp", "hflip", "vflip",
+                                         "shot_q", "shot_light" };
+    for (const char *p = q; *p; ) {
+        const char *amp = strchr(p, '&');
         size_t len = amp ? (size_t)(amp - p) : strlen(p);
-        char *eq = memchr(p, '=', len);
+        const char *eq = memchr(p, '=', len);
         size_t klen = eq ? (size_t)(eq - p) : len;
         bool ok = false;
         for (size_t i = 0; i < sizeof(known) / sizeof(known[0]); i++) {
             if (strlen(known[i]) == klen && !strncmp(p, known[i], klen)) ok = true;
         }
-        if (!ok) return send_error(req, "400 Bad Request", "unknown key");
+        if (!ok) return "unknown key";
         p = amp ? amp + 1 : p + len;
     }
 
-    bool has_em = false, has_gm = false, has_fm = false, has_eu = false, has_gi = false, has_fp = false;
-    bool has_wm = false, has_wr = false, has_wb = false;
-    cmode_t em = M_AUTO, gm = M_AUTO, fm = M_AUTO, wm = M_AUTO;
-    long eu = 0, gi = 0, fp = 0, wr = 0, wbl = 0;
-    char sp = 0;
-    char *end;
-
+    char v[16], *end;
 #define GET_MODE(key, has, out) \
     if (httpd_query_key_value(q, key, v, sizeof(v)) == ESP_OK) { \
-        if (!parse_mode(v, &out)) return send_error(req, "400 Bad Request", key " must be auto or manual"); \
-        has = true; }
+        if (!parse_mode(v, &s->out)) return key " must be auto or manual"; \
+        s->has = true; }
 #define GET_INT(key, has, out) \
     if (httpd_query_key_value(q, key, v, sizeof(v)) == ESP_OK) { \
-        out = strtol(v, &end, 10); \
-        if (end == v || *end) return send_error(req, "400 Bad Request", key " must be an integer"); \
-        has = true; }
+        s->out = strtol(v, &end, 10); \
+        if (end == v || *end) return key " must be an integer"; \
+        s->has = true; }
+#define GET_BIT(key, out) \
+    if (httpd_query_key_value(q, key, v, sizeof(v)) == ESP_OK) { \
+        if (strcmp(v, "0") && strcmp(v, "1")) return key " must be 0 or 1"; \
+        out = v[0] == '1'; }
 
     GET_MODE("exposure_mode", has_em, em);
     GET_MODE("gain_mode", has_gm, gm);
@@ -955,68 +1082,101 @@ static esp_err_t ctrl_post_handler(httpd_req_t *req)
     GET_MODE("wb_mode", has_wm, wm);
     GET_INT("wb_red", has_wr, wr);
     GET_INT("wb_blue", has_wb, wbl);
+    GET_INT("shot_q", has_sq, sq);
+    if (httpd_query_key_value(q, "sp", v, sizeof(v)) == ESP_OK) {
+        if (strcmp(v, "A") && strcmp(v, "B")) return "sp must be A or B";
+        s->sp = v[0];
+    }
+    GET_BIT("hflip", s->hf);
+    GET_BIT("vflip", s->vf);
+    int sl = -1;
+    GET_BIT("shot_light", sl);
+    if (sl >= 0) { s->has_sl = true; s->sl = sl; }
 #undef GET_MODE
 #undef GET_INT
-    if (httpd_query_key_value(q, "sp", v, sizeof(v)) == ESP_OK) {
-        if (strcmp(v, "A") && strcmp(v, "B")) return send_error(req, "400 Bad Request", "sp must be A or B");
-        sp = v[0];
-    }
-    int hf = -1, vf = -1;   /* -1 = not given */
-    if (httpd_query_key_value(q, "hflip", v, sizeof(v)) == ESP_OK) {
-        if (strcmp(v, "0") && strcmp(v, "1")) return send_error(req, "400 Bad Request", "hflip must be 0 or 1");
-        hf = v[0] == '1';
-    }
-    if (httpd_query_key_value(q, "vflip", v, sizeof(v)) == ESP_OK) {
-        if (strcmp(v, "0") && strcmp(v, "1")) return send_error(req, "400 Bad Request", "vflip must be 0 or 1");
-        vf = v[0] == '1';
-    }
+#undef GET_BIT
+    return NULL;
+}
 
+/* A stored preset: every key it has is applied. A key missing (an older
+ * preset) or of the wrong type is left as it is now. */
+static void settings_from_json(const cJSON *o, settings_t *s)
+{
+    const cJSON *it;
+#define J_MODE(key, has, out) \
+    if ((it = cJSON_GetObjectItem(o, key)) && cJSON_IsString(it) && parse_mode(it->valuestring, &s->out)) s->has = true;
+#define J_INT(key, has, out) \
+    if ((it = cJSON_GetObjectItem(o, key)) && cJSON_IsNumber(it)) { s->out = (long)it->valuedouble; s->has = true; }
+    J_MODE("exposure_mode", has_em, em);
+    J_MODE("gain_mode", has_gm, gm);
+    J_MODE("focus_mode", has_fm, fm);
+    J_INT("exposure_us", has_eu, eu);
+    J_INT("gain_index", has_gi, gi);
+    J_INT("focus_pos", has_fp, fp);
+    J_MODE("wb_mode", has_wm, wm);
+    J_INT("wb_red", has_wr, wr);
+    J_INT("wb_blue", has_wb, wbl);
+    J_INT("shot_q", has_sq, sq);
+#undef J_MODE
+#undef J_INT
+    if ((it = cJSON_GetObjectItem(o, "sp")) && cJSON_IsString(it) &&
+        (!strcmp(it->valuestring, "A") || !strcmp(it->valuestring, "B"))) s->sp = it->valuestring[0];
+    if ((it = cJSON_GetObjectItem(o, "hflip")) && cJSON_IsBool(it)) s->hf = cJSON_IsTrue(it);
+    if ((it = cJSON_GetObjectItem(o, "vflip")) && cJSON_IsBool(it)) s->vf = cJSON_IsTrue(it);
+    if ((it = cJSON_GetObjectItem(o, "shot_light")) && cJSON_IsBool(it)) { s->has_sl = true; s->sl = cJSON_IsTrue(it); }
+}
+
+/* Apply what was given (§3.5). True if the orientation changed: the caller
+ * then saves at once, replies and restarts (camctl.h). */
+static bool settings_apply(const settings_t *s)
+{
     xSemaphoreTake(s_lock, portMAX_DELAY);
     bool exp_dirty = false;
     int32_t cur;
 
-    if (sp && sp != s_sp_method) { s_sp_method = sp; exp_dirty = true; }
+    if (s->sp && s->sp != s_sp_method) { s_sp_method = s->sp; exp_dirty = true; }
 
     /* Entering manual without a value: start from what AE is using now, so the
      * picture does not jump at the switch. */
-    if (has_em && em != s_cfg.exp_mode) {
-        if (em == M_MANUAL) {
+    if (s->has_em && s->em != s_cfg.exp_mode) {
+        if (s->em == M_MANUAL) {
             /* Both from the sensor, whatever gain_mode says: a saved manual gain
              * paired with AE's live exposure is a jump in brightness. */
-            if (!has_eu && ctrl_get_user(V4L2_CID_EXPOSURE, &cur)) s_cfg.exp_lines = clamp_lines(cur);
-            if (!has_gi && ctrl_get_user(V4L2_CID_GAIN, &cur)) s_cfg.gain_index = cur;
+            if (!s->has_eu && ctrl_get_user(V4L2_CID_EXPOSURE, &cur)) s_cfg.exp_lines = clamp_lines(cur);
+            if (!s->has_gi && ctrl_get_user(V4L2_CID_GAIN, &cur)) s_cfg.gain_index = cur;
         }
-        s_cfg.exp_mode = em;
+        s_cfg.exp_mode = s->em;
         exp_dirty = true;
     }
-    if (has_gm && gm != s_cfg.gain_mode) {
-        if (gm == M_MANUAL && !has_gi && ctrl_get_user(V4L2_CID_GAIN, &cur)) s_cfg.gain_index = cur;
-        s_cfg.gain_mode = gm;
+    if (s->has_gm && s->gm != s_cfg.gain_mode) {
+        if (s->gm == M_MANUAL && !s->has_gi && ctrl_get_user(V4L2_CID_GAIN, &cur)) s_cfg.gain_index = cur;
+        s_cfg.gain_mode = s->gm;
         exp_dirty = true;
     }
-    if (has_eu) {
-        long us = eu < 0 ? 0 : eu;
+    if (s->has_eu) {
+        long us = s->eu < 0 ? 0 : s->eu;
         s_cfg.exp_lines = clamp_lines(us_to_lines((uint32_t)us));
         exp_dirty = true;
     }
-    if (has_gi) {
-        s_cfg.gain_index = clamp_i32((int32_t)gi, s_caps.gain_min, s_caps.gain_max);
+    if (s->has_gi) {
+        s_cfg.gain_index = clamp_i32((int32_t)s->gi, s_caps.gain_min, s_caps.gain_max);
         exp_dirty = true;
     }
-    if (exp_dirty && (s_cfg.exp_mode == M_MANUAL || has_em || sp)) apply_exposure_locked();
+    if (exp_dirty && (s_cfg.exp_mode == M_MANUAL || s->has_em || s->sp)) apply_exposure_locked();
 
     bool start_af = false;
-    if (has_fp) s_cfg.focus_pos = clamp_i32((int32_t)fp, s_caps.focus_min, s_caps.focus_max);
-    if (has_fm) {
-        if (fm == M_AUTO && s_cfg.focus_mode == M_MANUAL) start_af = true;
+    if (s->has_fp) s_cfg.focus_pos = clamp_i32((int32_t)s->fp, s_caps.focus_min, s_caps.focus_max);
+    if (s->has_fm) {
+        if (s->fm == M_AUTO && s_cfg.focus_mode == M_MANUAL) start_af = true;
         /* Manual without a position keeps the lens where AF left it. */
-        if (fm == M_MANUAL && s_cfg.focus_mode == M_AUTO && !has_fp) {
+        if (s->fm == M_MANUAL && s_cfg.focus_mode == M_AUTO && !s->has_fp) {
             int f = focus_get();
             if (f >= 0) s_cfg.focus_pos = f;
         }
-        s_cfg.focus_mode = fm;
+        s_cfg.focus_mode = s->fm;
     }
-    if (s_cfg.focus_mode == M_MANUAL && (has_fp || has_fm)) {
+    if (s->force_af && s_cfg.focus_mode == M_AUTO) start_af = true;
+    if (s_cfg.focus_mode == M_MANUAL && (s->has_fp || s->has_fm)) {
         s_af_abort = true;      /* a running search must not move the lens back */
         if (!focus_set(s_cfg.focus_pos)) ESP_LOGW(TAG, "focus_set(%" PRId32 ") failed", s_cfg.focus_pos);
     }
@@ -1025,17 +1185,33 @@ static esp_err_t ctrl_post_handler(httpd_req_t *req)
     /* White balance: manual values are written as given; auto hands the
      * current gains to the grey-world loop as its starting point. A one-push
      * in progress is overridden by any explicit choice. */
-    if (has_wr) s_cfg.wb_red = clamp_i32((int32_t)wr, WB_MIN, WB_MAX);
-    if (has_wb) s_cfg.wb_blue = clamp_i32((int32_t)wbl, WB_MIN, WB_MAX);
-    if (has_wm) s_cfg.wb_mode = wm;
-    if ((has_wr || has_wb) && s_cfg.wb_mode == M_MANUAL) wb_write(s_cfg.wb_red, s_cfg.wb_blue);
+    if (s->has_wr) s_cfg.wb_red = clamp_i32((int32_t)s->wr, WB_MIN, WB_MAX);
+    if (s->has_wb) s_cfg.wb_blue = clamp_i32((int32_t)s->wbl, WB_MIN, WB_MAX);
+    if (s->has_wm) s_cfg.wb_mode = s->wm;
+    if ((s->has_wr || s->has_wb || s->has_wm) && s_cfg.wb_mode == M_MANUAL) wb_write(s_cfg.wb_red, s_cfg.wb_blue);
 
-    /* Orientation applies at boot only (camctl.h): save now, reply, restart. */
-    bool reorient = (hf >= 0 && hf != s_cfg.hflip) || (vf >= 0 && vf != s_cfg.vflip);
-    if (hf >= 0) s_cfg.hflip = hf;
-    if (vf >= 0) s_cfg.vflip = vf;
+    if (s->has_sq) s_cfg.shot_q = clamp_i32((int32_t)s->sq, 1, 100);
+    if (s->has_sl) s_cfg.shot_light = s->sl;
+
+    /* Orientation applies at boot only (camctl.h). */
+    bool reorient = (s->hf >= 0 && s->hf != s_cfg.hflip) || (s->vf >= 0 && s->vf != s_cfg.vflip);
+    if (s->hf >= 0) s_cfg.hflip = s->hf;
+    if (s->vf >= 0) s_cfg.vflip = s->vf;
     xSemaphoreGive(s_lock);
+    return reorient;
+}
 
+/* After a change by hand: the active preset no longer matches. */
+static void preset_touched(void)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_preset[0]) s_preset_modified = true;
+    xSemaphoreGive(s_lock);
+}
+
+/* Reply with the state; if the orientation changed, save first and restart after. */
+static esp_err_t reply_and_commit(httpd_req_t *req, bool reorient)
+{
     if (reorient) {
         if (s_save_timer) esp_timer_stop(s_save_timer);
         save_now();
@@ -1047,12 +1223,29 @@ static esp_err_t ctrl_post_handler(httpd_req_t *req)
     return send_state(req, NULL);
 }
 
+/* POST /ctrl?key=value... - only the keys given change (§3.5). */
+static esp_err_t ctrl_post_handler(httpd_req_t *req)
+{
+    char q[256] = "";
+    size_t ql = httpd_req_get_url_query_len(req);
+    if (ql >= sizeof(q)) return send_error(req, "400 Bad Request", "query too long");
+    if (ql) httpd_req_get_url_query_str(req, q, sizeof(q));
+
+    settings_t s = SETTINGS_NONE;
+    const char *err = settings_from_query(q, &s);
+    if (err) return send_error(req, "400 Bad Request", err);
+    bool reorient = settings_apply(&s);
+    if (settings_any(&s)) preset_touched();
+    return reply_and_commit(req, reorient);
+}
+
 static esp_err_t af_handler(httpd_req_t *req)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     bool ok = af_start_locked();
     if (ok && s_cfg.focus_mode != M_AUTO) {
         s_cfg.focus_mode = M_AUTO;
+        if (s_preset[0]) s_preset_modified = true;
         save_later();
     }
     xSemaphoreGive(s_lock);
@@ -1066,6 +1259,7 @@ static esp_err_t onepush_handler(httpd_req_t *req)
     if (s_isp_fd < 0) return send_error(req, "503 Service Unavailable", "white balance unavailable");
     xSemaphoreTake(s_lock, portMAX_DELAY);
     bool ok = wb_onepush_start_locked();
+    if (ok && s_preset[0]) s_preset_modified = true;     /* it ends in manual WB */
     xSemaphoreGive(s_lock);
     if (!ok) return send_error(req, "409 Conflict", "one-push already running");
     static const char body[] = "{\"wb_state\":\"running\"}";
@@ -1089,11 +1283,231 @@ static esp_err_t reset_handler(httpd_req_t *req)
     s_config_state = "default";
     bool was_flipped = s_cfg.hflip || s_cfg.vflip;
     s_cfg.hflip = s_cfg.vflip = false;
+    s_cfg.shot_q = SHOT_Q_DEFAULT;
+    s_cfg.shot_light = true;
+    s_sp_method = SP_METHOD_DEFAULT;
+    s_preset[0] = '\0';             /* the presets themselves stay */
+    s_preset_modified = false;
     xSemaphoreGive(s_lock);
     ESP_LOGI(TAG, "config reset to defaults");
     esp_err_t r = send_state(req, NULL);
     if (was_flipped) restart_soon();   /* the sensor is still flipped until then */
     return r;
+}
+
+/* ---- Presets ------------------------------------------------------------ */
+/*
+ * presets.json = {"version":1,"presets":[{"name":"…", <settings as config.json>}, …]}
+ * in the order they were first saved. Only the httpd task touches the file
+ * (all the handlers below), so it needs no lock of its own; s_preset and
+ * s_preset_modified are s_cfg's companions and go under s_lock.
+ */
+
+/* The stored list as a cJSON array (never NULL). Entries with a bad name are dropped. */
+static cJSON *presets_read(void)
+{
+    cJSON *o = s_fs_ok ? read_json(PRESETS_FILE) : NULL;
+    cJSON *v = o ? cJSON_GetObjectItem(o, "version") : NULL;
+    cJSON *arr = NULL;
+    if (o && cJSON_IsNumber(v) && v->valueint == CFG_VERSION) arr = cJSON_DetachItemFromObject(o, "presets");
+    else if (o) ESP_LOGW(TAG, "%s: wrong version - ignored", PRESETS_FILE);
+    cJSON_Delete(o);
+    if (!cJSON_IsArray(arr)) {
+        cJSON_Delete(arr);
+        arr = cJSON_CreateArray();
+    }
+    for (int i = cJSON_GetArraySize(arr) - 1; i >= 0; i--) {
+        cJSON *n = cJSON_GetObjectItem(cJSON_GetArrayItem(arr, i), "name");
+        if (!cJSON_IsString(n) || !preset_name_ok(n->valuestring)) cJSON_DeleteItemFromArray(arr, i);
+    }
+    return arr;
+}
+
+static bool presets_write(cJSON *arr)
+{
+    if (!s_fs_ok) return false;
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddNumberToObject(o, "version", CFG_VERSION);
+    cJSON_AddItemReferenceToObject(o, "presets", arr);
+    char *text = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);                         /* a reference: arr itself stays */
+    bool ok = text && write_file(PRESETS_TMP, PRESETS_FILE, text);
+    if (!ok) ESP_LOGE(TAG, "presets: SAVE FAILED");
+    cJSON_free(text);
+    return ok;
+}
+
+static int preset_index(cJSON *arr, const char *name)
+{
+    int n = cJSON_GetArraySize(arr);
+    for (int i = 0; i < n; i++) {
+        cJSON *it = cJSON_GetObjectItem(cJSON_GetArrayItem(arr, i), "name");
+        if (cJSON_IsString(it) && !strcmp(it->valuestring, name)) return i;
+    }
+    return -1;
+}
+
+/* {"active":name|null,"modified":b,"max":N,"presets":[…]}. Frees arr. */
+static esp_err_t send_presets(httpd_req_t *req, cJSON *arr)
+{
+    cJSON *o = cJSON_CreateObject();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_preset[0]) cJSON_AddStringToObject(o, "active", s_preset);
+    else cJSON_AddNullToObject(o, "active");
+    cJSON_AddBoolToObject(o, "modified", s_preset[0] && s_preset_modified);
+    xSemaphoreGive(s_lock);
+    cJSON_AddNumberToObject(o, "max", PRESETS_MAX);
+    cJSON_AddItemToObject(o, "presets", arr);
+    char *text = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    if (!text) return send_error(req, "500 Internal Server Error", "no memory");
+    esp_err_t r = send_json(req, NULL, text, (int)strlen(text));
+    cJSON_free(text);
+    return r;
+}
+
+/* The query and its decoded name=. Sends the 400 itself and returns false if bad. */
+#define PRESET_QUERY_MAX    (2 * 3 * PRESET_NAME_MAX + 32)
+#define BAD_NAME            "name must be 1-48 bytes of text, without \\\" or \\\\"
+static bool preset_query(httpd_req_t *req, char *q, const char *key, char *name)
+{
+    size_t ql = httpd_req_get_url_query_len(req);
+    if (ql >= PRESET_QUERY_MAX) { send_error(req, "400 Bad Request", "query too long"); return false; }
+    q[0] = '\0';
+    if (ql) httpd_req_get_url_query_str(req, q, PRESET_QUERY_MAX);
+    if (!query_text(q, key, name, PRESET_NAME_MAX + 1) || !preset_name_ok(name)) {
+        send_error(req, "400 Bad Request", BAD_NAME);
+        return false;
+    }
+    return true;
+}
+
+static esp_err_t presets_get_handler(httpd_req_t *req)
+{
+    return send_presets(req, presets_read());
+}
+
+/* POST /presets/save?name=… - the current settings under that name (replaced if it exists). */
+static esp_err_t preset_save_handler(httpd_req_t *req)
+{
+    char q[PRESET_QUERY_MAX], name[PRESET_NAME_MAX + 1];
+    if (!preset_query(req, q, "name", name)) return ESP_OK;
+    if (!s_fs_ok) return send_error(req, "503 Service Unavailable", "settings storage unavailable");
+
+    cJSON *arr = presets_read();
+    int i = preset_index(arr, name);
+    if (i < 0 && cJSON_GetArraySize(arr) >= PRESETS_MAX) {
+        cJSON_Delete(arr);
+        return send_error(req, "409 Conflict", "too many presets");
+    }
+    cJSON *p = cJSON_CreateObject();
+    cJSON_AddStringToObject(p, "name", name);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    settings_to_json_locked(p);
+    xSemaphoreGive(s_lock);
+    if (i >= 0) cJSON_ReplaceItemInArray(arr, i, p);
+    else cJSON_AddItemToArray(arr, p);
+    if (!presets_write(arr)) {
+        cJSON_Delete(arr);
+        return send_error(req, "500 Internal Server Error", "could not write presets");
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    strlcpy(s_preset, name, sizeof(s_preset));
+    s_preset_modified = false;
+    xSemaphoreGive(s_lock);
+    save_later();
+    ESP_LOGI(TAG, "preset saved: %s", name);
+    return send_presets(req, arr);
+}
+
+/* POST /presets/load?name=… - apply every setting it holds; replies as GET /ctrl. */
+static esp_err_t preset_load_handler(httpd_req_t *req)
+{
+    char q[PRESET_QUERY_MAX], name[PRESET_NAME_MAX + 1];
+    if (!preset_query(req, q, "name", name)) return ESP_OK;
+
+    cJSON *arr = presets_read();
+    int i = preset_index(arr, name);
+    if (i < 0) {
+        cJSON_Delete(arr);
+        return send_error(req, "404 Not Found", "no such preset");
+    }
+    settings_t s = SETTINGS_NONE;
+    settings_from_json(cJSON_GetArrayItem(arr, i), &s);
+    cJSON_Delete(arr);
+    s.force_af = true;          /* a new specimen: focus again if the preset says auto */
+    bool reorient = settings_apply(&s);
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    strlcpy(s_preset, name, sizeof(s_preset));
+    s_preset_modified = false;
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "preset loaded: %s%s", name, reorient ? " (orientation changes - restarting)" : "");
+    return reply_and_commit(req, reorient);
+}
+
+static esp_err_t preset_delete_handler(httpd_req_t *req)
+{
+    char q[PRESET_QUERY_MAX], name[PRESET_NAME_MAX + 1];
+    if (!preset_query(req, q, "name", name)) return ESP_OK;
+
+    cJSON *arr = presets_read();
+    int i = preset_index(arr, name);
+    if (i < 0) {
+        cJSON_Delete(arr);
+        return send_error(req, "404 Not Found", "no such preset");
+    }
+    cJSON_DeleteItemFromArray(arr, i);
+    if (!presets_write(arr)) {
+        cJSON_Delete(arr);
+        return send_error(req, "500 Internal Server Error", "could not write presets");
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool was_active = !strcmp(s_preset, name);
+    if (was_active) { s_preset[0] = '\0'; s_preset_modified = false; }
+    xSemaphoreGive(s_lock);
+    if (was_active) save_later();
+    ESP_LOGI(TAG, "preset deleted: %s", name);
+    return send_presets(req, arr);
+}
+
+/* POST /presets/rename?name=…&to=… */
+static esp_err_t preset_rename_handler(httpd_req_t *req)
+{
+    char q[PRESET_QUERY_MAX], name[PRESET_NAME_MAX + 1], to[PRESET_NAME_MAX + 1];
+    if (!preset_query(req, q, "name", name)) return ESP_OK;
+    if (!query_text(q, "to", to, sizeof(to)) || !preset_name_ok(to)) {
+        return send_error(req, "400 Bad Request", "to: " BAD_NAME);
+    }
+    cJSON *arr = presets_read();
+    int i = preset_index(arr, name);
+    int j = preset_index(arr, to);
+    if (i < 0 || (j >= 0 && j != i)) {
+        cJSON_Delete(arr);
+        return i < 0 ? send_error(req, "404 Not Found", "no such preset")
+                     : send_error(req, "409 Conflict", "a preset with that name exists");
+    }
+    cJSON_ReplaceItemInObject(cJSON_GetArrayItem(arr, i), "name", cJSON_CreateString(to));
+    if (!presets_write(arr)) {
+        cJSON_Delete(arr);
+        return send_error(req, "500 Internal Server Error", "could not write presets");
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool was_active = !strcmp(s_preset, name);
+    if (was_active) strlcpy(s_preset, to, sizeof(s_preset));
+    xSemaphoreGive(s_lock);
+    if (was_active) save_later();
+    ESP_LOGI(TAG, "preset renamed: %s -> %s", name, to);
+    return send_presets(req, arr);
+}
+
+void camctl_shot_settings(int *quality, bool *light)
+{
+    if (!s_lock) return;        /* no camera: camctl never started; keep the caller's */
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    *quality = (int)s_cfg.shot_q;
+    *light = s_cfg.shot_light;
+    xSemaphoreGive(s_lock);
 }
 
 esp_err_t camctl_register_http(httpd_handle_t server)
@@ -1105,6 +1519,11 @@ esp_err_t camctl_register_http(httpd_handle_t server)
         { .uri = "/af",           .method = HTTP_POST, .handler = af_handler },
         { .uri = "/wb/onepush",   .method = HTTP_POST, .handler = onepush_handler },
         { .uri = "/config/reset", .method = HTTP_POST, .handler = reset_handler },
+        { .uri = "/presets",        .method = HTTP_GET,  .handler = presets_get_handler },
+        { .uri = "/presets/save",   .method = HTTP_POST, .handler = preset_save_handler },
+        { .uri = "/presets/load",   .method = HTTP_POST, .handler = preset_load_handler },
+        { .uri = "/presets/delete", .method = HTTP_POST, .handler = preset_delete_handler },
+        { .uri = "/presets/rename", .method = HTTP_POST, .handler = preset_rename_handler },
     };
     for (size_t i = 0; i < CAMCTL_URI_COUNT; i++) {
         esp_err_t r = httpd_register_uri_handler(server, &uris[i]);
