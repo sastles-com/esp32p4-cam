@@ -4,7 +4,7 @@
 この PC のサーバーを通して、ブラウザや他のプログラムからカメラを操作する。
 
 - 対象: usb-app ファーム（トンネル版 2）と、このリポジトリの `usb-app/pc`
-- 最終更新: 2026-11-16（プリセットから向きを外す）。2026-11-13（プリセット、撮影設定 `shot_q`・`shot_light` を追加）
+- 最終更新: 2026-11-16（レシピ 4.6、プリセットから向きを外す）。2026-11-13（プリセット、撮影設定 `shot_q`・`shot_light` を追加）
 
 ## 1. 概要
 
@@ -329,7 +329,107 @@ AF を 1 回走らせる（ピントを auto にする）。`202 {"af_state":"ru
 
 名前を変える。`to` が別のプリセットにあれば 409 `a preset with that name exists`。応答は `GET /presets` と同じ形。
 
-### 4.6 診断
+### 4.6 レシピ（セット撮影）
+
+条件を少しずつ変えた複数枚を続けて撮るための手順書。ボードのフラッシュ（`/cfg/recipes.json`）に保存する。
+再起動しても残る。**ボードは保存と検査だけを行い、実行はクライアント（Web UI）が既存の API で行う**（下の「実行」）。
+カメラが無いと 404。
+
+保存は JSON ボディで送る（`POST /recipes/save`）。ステップの配列をそのまま渡せ、途中で失敗しても
+半端なレシピが残らないため。PC サーバーはボディを `Content-Length` 付きでそのままボードへ中継する。
+
+#### データモデル
+
+```json
+{
+  "name": "露出ブラケット5段",
+  "base_preset": "標準",
+  "steps": [
+    {"enabled": true, "overrides": {"exposure_mode": "manual", "exposure_us": 4000},
+     "light_out": 3, "q": 95, "settle_ms": 800},
+    {"enabled": true, "overrides": {"exposure_us": 8000}, "light_out": 3, "q": 95, "settle_ms": 800}
+  ]
+}
+```
+
+| キー | 型・範囲 | 意味 |
+|---|---|---|
+| `name` | 文字列 | レシピ名。規則はプリセット名と同じ（UTF-8 で 1〜48 バイト、制御文字・`"`・`\` 不可） |
+| `base_preset` | プリセット名 / `null` | 土台にするプリセット（4.5）。`null` は実行を始めた時点のボードの設定が土台。存在するかは保存時には問わない |
+| `steps` | 配列（1〜30 個） | 1 要素 = 1 枚 |
+| `steps[].enabled` | `true` / `false`（省略時 `true`） | `false` のステップは実行時に飛ばす |
+| `steps[].overrides` | オブジェクト（省略時 `{}`） | そのステップで土台から変える項目だけ。キーは `exposure_mode`, `exposure_us`（µs）, `gain_mode`, `gain_index`, `focus_mode`, `focus_pos`, `wb_mode`, `wb_red`, `wb_blue`（`POST /ctrl` と同じ意味と単位）。`*_mode` は `"auto"` / `"manual"`、ほかは 0 以上の整数。向き・`sp`・`shot_q`・`shot_light` は書けない |
+| `steps[].light_out` | 0〜255 / `null`（省略時 `null`） | 照明の出力マスク（ビット 0 = OUT0、`POST /io?out=` と同じ）。`null` は照明を操作しない |
+| `steps[].q` | 1〜100（省略時 95） | JPEG 品質 |
+| `steps[].settle_ms` | 0〜60000（省略時 800） | 条件を適用してから撮るまでの待ち時間（ms） |
+
+継承: 各ステップの実効値は「土台の値に、そのステップの `overrides` を重ねたもの」。前のステップの
+`overrides` は次のステップに持ち越さない。範囲外の数値はボードが `/ctrl` と同じく丸める。
+
+保存すると、省略したキーは既定値で埋めた形（上の表のすべてのキーがある形）で記録される。`GET /recipes` は
+その形を返すので、そのままエクスポートすればボードの保存内容と一致する。最大 20 個。
+
+エラー（400）: 名前の規則違反、`steps` が空・31 個以上、知らないキー、型や範囲の違反。
+メッセージで原因が分かる（例 `{"error":"light_out must be 0..255 or null"}`）。
+
+#### `GET /recipes`
+
+```json
+{"max": 20, "max_steps": 30, "recipes": [ <レシピ>, … ]}
+```
+
+`recipes` は最初に保存した順。
+
+#### `POST /recipes/save`（ボディ: レシピ 1 件の JSON）
+
+同じ名前があれば上書き（順番はそのまま）。応答は `GET /recipes` と同じ形。
+20 個あって新しい名前なら 409 `too many recipes`。ボディが無い 400、12 kB を超えると 413。
+
+#### `POST /recipes/delete?name=…`
+
+削除する。無ければ 404 `no such recipe`。応答は `GET /recipes` と同じ形。
+
+#### `POST /recipes/rename?name=…&to=…`
+
+名前を変える。`to` が別のレシピにあれば 409 `a recipe with that name exists`。応答は `GET /recipes` と同じ形。
+
+#### 実行（クライアントが行う）
+
+1. 始める前に `GET /ctrl` と `GET /io` で今の設定と照明を記録する。`base_preset` があれば
+   `POST /presets/load` で読み込む（ピントが `auto` のプリセットなら AF が 1 回走る）。土台の値は、その後の `GET /ctrl`。
+2. 有効な各ステップで: `light_out` があれば `POST /io?out=` → 前のステップで変えた項目を土台の値に戻し、
+   `overrides` を `POST /ctrl` で適用 → `settle_ms` 待つ → `GET /ctrl` で実効値を読む → `GET /snapshot.jpg?q=` で撮る。
+   失敗したステップは記録して次へ進む。
+3. 終わったら（中断・失敗でも）照明を記録した値に戻し、カメラの設定も戻す（始める前に未変更のプリセットを
+   選んでいたらそれを `POST /presets/load`、そうでなければ記録した値を `POST /ctrl`）。
+
+`/shot`（ボードのリングは 4 枚）は使わない。照明は `/io` で点けたまま `snapshot.jpg` で撮る。
+
+#### 実行結果のマニフェスト（Web UI が出力する）
+
+```json
+{
+  "recipe": "露出ブラケット5段",
+  "base_preset": "標準",
+  "executed_at": "2026-11-16T09:00:00+09:00",
+  "shots": [
+    {"file": "露出ブラケット5段_01_20261116-090000.jpg", "step": 1, "ok": true,
+     "taken_at": "2026-11-16T09:00:00+09:00",
+     "applied": {"exposure_mode": "manual", "exposure_us": 4000, "gain_mode": "auto", "gain_index": 12,
+                 "focus_mode": "manual", "focus_pos": 720, "wb_mode": "manual", "wb_red": 1907, "wb_blue": 1869},
+     "light_out": 3, "q": 95}
+  ]
+}
+```
+
+- `file`: 写真のファイル名 `<レシピ名>_NN_<YYYYMMDD-HHMMSS>.jpg`（NN はステップ番号、01 始まり。
+  レシピ名のうち `\ / : * ? " < > |` と空白は `_` に置き換える）。写真との対応はこれで取る。
+- `step`: レシピの中のステップ番号（1 始まり。飛ばしたステップの番号も数える）。
+- `applied`: 撮る直前に `GET /ctrl` で読んだ 9 項目（ボードが丸めた後の実効値）。
+- `light_out`: 撮ったときの照明の出力（`null` 指定のステップでもその時点の値）。
+- 失敗したステップは `"ok": false`、`"file": null`、`"error": "…"`。
+
+### 4.7 診断
 
 #### `GET /stats`
 
@@ -365,6 +465,9 @@ curl -X POST "$B/io?light=0"
 curl -X POST "$B/presets/save" --data-urlencode "name=試験片A" -G   # 今の設定を保存
 curl -X POST "$B/presets/load" --data-urlencode "name=試験片A" -G   # 読み込む
 curl -X POST $B/shot                                                # その設定で撮る
+curl -X POST $B/recipes/save -H 'Content-Type: application/json' \
+  -d '{"name":"露出3段","base_preset":"試験片A","steps":[{"overrides":{"exposure_us":4000}},{"overrides":{"exposure_us":8000}},{"overrides":{"exposure_us":16000}}]}'
+curl $B/recipes
 ```
 
 ```python

@@ -58,6 +58,7 @@
 
 #include "camcore.h"
 #include "camctl.h"
+#include "recipe.h"
 #include "ioexp.h"
 #include "pins.h"
 #include "shot.h"
@@ -730,7 +731,7 @@ static httpd_handle_t start_server(bool with_camera)
     const size_t n_uris = sizeof(uris) / sizeof(uris[0]);
     /* The default of 8 does not hold the five above plus the modules'. A
      * handler over the limit is refused, and the URI then quietly 404s. */
-    cfg.max_uri_handlers = n_uris + CAMCTL_URI_COUNT + SHOT_URI_COUNT + IOEXP_URI_COUNT + 2;
+    cfg.max_uri_handlers = n_uris + CAMCTL_URI_COUNT + RECIPE_URI_COUNT + SHOT_URI_COUNT + IOEXP_URI_COUNT + 2;
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &cfg) != ESP_OK) {
@@ -742,7 +743,10 @@ static httpd_handle_t start_server(bool with_camera)
         esp_err_t r = httpd_register_uri_handler(server, &uris[i]);
         if (r != ESP_OK) ESP_LOGE(TAG, "register %s failed: %s", uris[i].uri, esp_err_to_name(r));
     }
-    if (with_camera) camctl_register_http(server);
+    if (with_camera) {
+        camctl_register_http(server);
+        recipe_register_http(server);   /* uses camctl's settings file system */
+    }
     shot_register_http(server);
     ioexp_register_http(server);
     return server;

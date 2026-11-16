@@ -29,6 +29,7 @@
 #include "cJSON.h"
 
 #include "camctl.h"
+#include "cfgstore.h"
 
 static const char *TAG = "camctl";
 
@@ -93,7 +94,6 @@ static const char *TAG = "camctl";
 /* Coalesce slider drags into one flash write (§3.6). */
 #define SAVE_DELAY_US       (2 * 1000 * 1000)
 
-#define CFG_BASE            "/cfg"
 #define CFG_PARTITION       "storage"
 #define CFG_FILE            CFG_BASE "/config.json"
 #define CFG_TMP             CFG_BASE "/config.json.tmp"
@@ -107,7 +107,7 @@ static const char *TAG = "camctl";
 #define PRESETS_TMP         CFG_BASE "/presets.json.tmp"
 /* Name: 1..PRESET_NAME_MAX bytes of UTF-8 (16 kanji fit), no control characters,
  * no " or \. At ~400 bytes each, PRESETS_MAX keep presets.json near 8 kB. */
-#define PRESET_NAME_MAX     48
+#define PRESET_NAME_MAX     CFG_NAME_MAX
 #define PRESETS_MAX         20
 
 #define SHOT_Q_DEFAULT      95
@@ -590,7 +590,7 @@ static void settings_to_json_locked(cJSON *o, bool orientation)
 
 /* tmp then rename: LittleFS renames atomically over an existing name, so a
  * power cut mid-write leaves the old file intact. */
-static bool write_file(const char *tmp, const char *path, const char *text)
+bool cfg_write_file(const char *tmp, const char *path, const char *text)
 {
     FILE *f = fopen(tmp, "w");
     bool ok = f && fputs(text, f) >= 0;
@@ -615,7 +615,7 @@ static void save_now(void)
     char *text = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     if (!text) return;
-    bool ok = write_file(CFG_TMP, CFG_FILE, text);
+    bool ok = cfg_write_file(CFG_TMP, CFG_FILE, text);
     ESP_LOGI(TAG, "config %s: %s", ok ? "saved" : "SAVE FAILED", text);
     cJSON_free(text);
 }
@@ -650,11 +650,11 @@ static bool parse_mode(const char *s, cmode_t *out)
 /* The whole file, parsed. NULL if missing, too big or not JSON. (This read
  * 512 bytes on the stack once; config.json with a preset name can pass that,
  * and a cut-off file would put every setting back to default.) */
-static cJSON *read_json(const char *path)
+cJSON *cfg_read_json(const char *path, size_t max)
 {
     struct stat st;
     if (stat(path, &st) != 0 || st.st_size <= 0) return NULL;
-    if (st.st_size > CFG_READ_MAX) {
+    if ((size_t)st.st_size > max) {
         ESP_LOGW(TAG, "%s is %ld bytes - too big, ignored", path, (long)st.st_size);
         return NULL;
     }
@@ -672,7 +672,7 @@ static cJSON *read_json(const char *path)
 
 /* A preset name as stored and sent: 1..PRESET_NAME_MAX bytes of valid UTF-8,
  * no control characters, no " or \ (so it is safe inside any JSON we print). */
-static bool preset_name_ok(const char *s)
+bool cfg_name_ok(const char *s)
 {
     size_t n = strlen(s);
     if (n == 0 || n > PRESET_NAME_MAX) return false;
@@ -690,7 +690,7 @@ static bool preset_name_ok(const char *s)
 }
 
 /* Query value of `key`, %XX- and +-decoded, into out (size outsz). False if absent or too long. */
-static bool query_text(const char *q, const char *key, char *out, size_t outsz)
+bool cfg_query_text(const char *q, const char *key, char *out, size_t outsz)
 {
     char raw[3 * PRESET_NAME_MAX + 8];
     if (httpd_query_key_value(q, key, raw, sizeof(raw)) != ESP_OK) return false;
@@ -730,7 +730,7 @@ static void load_config(void)
         return;
     }
 
-    cJSON *o = read_json(path);
+    cJSON *o = cfg_read_json(path, CFG_READ_MAX);
     cJSON *v = o ? cJSON_GetObjectItem(o, "version") : NULL;
     if (!o || !cJSON_IsNumber(v) || v->valueint != CFG_VERSION) {
         ESP_LOGW(TAG, "%s unreadable or wrong version - ignoring it, using defaults", path);
@@ -755,7 +755,7 @@ static void load_config(void)
         (!strcmp(it->valuestring, "A") || !strcmp(it->valuestring, "B"))) s_sp_method = it->valuestring[0];
     if ((it = cJSON_GetObjectItem(o, "shot_q")) && cJSON_IsNumber(it)) s_cfg.shot_q = clamp_i32(it->valueint, 1, 100);
     if ((it = cJSON_GetObjectItem(o, "shot_light")) && cJSON_IsBool(it)) s_cfg.shot_light = cJSON_IsTrue(it);
-    if ((it = cJSON_GetObjectItem(o, "preset")) && cJSON_IsString(it) && preset_name_ok(it->valuestring)) {
+    if ((it = cJSON_GetObjectItem(o, "preset")) && cJSON_IsString(it) && cfg_name_ok(it->valuestring)) {
         strlcpy(s_preset, it->valuestring, sizeof(s_preset));
         s_preset_modified = cJSON_IsTrue(cJSON_GetObjectItem(o, "preset_modified"));
     }
@@ -784,10 +784,15 @@ static void mount_fs(void)
     }
 }
 
+bool cfg_fs_ok(void)
+{
+    return s_fs_ok;
+}
+
 void camctl_saved_orientation(bool *hflip, bool *vflip)
 {
     mount_fs();
-    cJSON *o = s_fs_ok ? read_json(CFG_FILE) : NULL;
+    cJSON *o = s_fs_ok ? cfg_read_json(CFG_FILE, CFG_READ_MAX) : NULL;
     cJSON *v = o ? cJSON_GetObjectItem(o, "version") : NULL;
     if (o && cJSON_IsNumber(v) && v->valueint == CFG_VERSION) read_orientation(o);
     cJSON_Delete(o);
@@ -963,7 +968,7 @@ static esp_err_t send_state(httpd_req_t *req, const char *status)
     int32_t sq = s_cfg.shot_q;
     bool sl = s_cfg.shot_light;
     char preset[PRESET_NAME_MAX + 1];
-    strlcpy(preset, s_preset, sizeof(preset));      /* preset_name_ok: safe to print as is */
+    strlcpy(preset, s_preset, sizeof(preset));      /* cfg_name_ok: safe to print as is */
     bool pmod = s_preset_modified;
     xSemaphoreGive(s_lock);
 
@@ -1311,7 +1316,7 @@ static esp_err_t reset_handler(httpd_req_t *req)
  * left out the orientation): not shown, and gone at the next write. */
 static cJSON *presets_read(void)
 {
-    cJSON *o = s_fs_ok ? read_json(PRESETS_FILE) : NULL;
+    cJSON *o = s_fs_ok ? cfg_read_json(PRESETS_FILE, CFG_READ_MAX) : NULL;
     cJSON *v = o ? cJSON_GetObjectItem(o, "version") : NULL;
     cJSON *arr = NULL;
     if (o && cJSON_IsNumber(v) && v->valueint == CFG_VERSION) arr = cJSON_DetachItemFromObject(o, "presets");
@@ -1323,7 +1328,7 @@ static cJSON *presets_read(void)
     }
     for (int i = cJSON_GetArraySize(arr) - 1; i >= 0; i--) {
         cJSON *n = cJSON_GetObjectItem(cJSON_GetArrayItem(arr, i), "name");
-        if (!cJSON_IsString(n) || !preset_name_ok(n->valuestring)) {
+        if (!cJSON_IsString(n) || !cfg_name_ok(n->valuestring)) {
             cJSON_DeleteItemFromArray(arr, i);
             continue;
         }
@@ -1342,7 +1347,7 @@ static bool presets_write(cJSON *arr)
     cJSON_AddItemReferenceToObject(o, "presets", arr);
     char *text = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);                         /* a reference: arr itself stays */
-    bool ok = text && write_file(PRESETS_TMP, PRESETS_FILE, text);
+    bool ok = text && cfg_write_file(PRESETS_TMP, PRESETS_FILE, text);
     if (!ok) ESP_LOGE(TAG, "presets: SAVE FAILED");
     cJSON_free(text);
     return ok;
@@ -1379,14 +1384,14 @@ static esp_err_t send_presets(httpd_req_t *req, cJSON *arr)
 
 /* The query and its decoded name=. Sends the 400 itself and returns false if bad. */
 #define PRESET_QUERY_MAX    (2 * 3 * PRESET_NAME_MAX + 32)
-#define BAD_NAME            "name must be 1-48 bytes of text, without \\\" or \\\\"
+#define BAD_NAME            CFG_BAD_NAME
 static bool preset_query(httpd_req_t *req, char *q, const char *key, char *name)
 {
     size_t ql = httpd_req_get_url_query_len(req);
     if (ql >= PRESET_QUERY_MAX) { send_error(req, "400 Bad Request", "query too long"); return false; }
     q[0] = '\0';
     if (ql) httpd_req_get_url_query_str(req, q, PRESET_QUERY_MAX);
-    if (!query_text(q, key, name, PRESET_NAME_MAX + 1) || !preset_name_ok(name)) {
+    if (!cfg_query_text(q, key, name, PRESET_NAME_MAX + 1) || !cfg_name_ok(name)) {
         send_error(req, "400 Bad Request", BAD_NAME);
         return false;
     }
@@ -1488,7 +1493,7 @@ static esp_err_t preset_rename_handler(httpd_req_t *req)
 {
     char q[PRESET_QUERY_MAX], name[PRESET_NAME_MAX + 1], to[PRESET_NAME_MAX + 1];
     if (!preset_query(req, q, "name", name)) return ESP_OK;
-    if (!query_text(q, "to", to, sizeof(to)) || !preset_name_ok(to)) {
+    if (!cfg_query_text(q, "to", to, sizeof(to)) || !cfg_name_ok(to)) {
         return send_error(req, "400 Bad Request", "to: " BAD_NAME);
     }
     cJSON *arr = presets_read();

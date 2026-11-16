@@ -3,6 +3,26 @@
 別の LLM / 開発者がこのプロジェクトを引き継ぐための資料。
 **最終更新: 2026-10-15** ・ ステータス: ① MF 静止画ツールが実機で動作 (ブラウザでの操作感は未確認)。② AF 動画、③ MF 動画は未着手。
 
+## 0000. 2026-11-16: レシピ（セット撮影）・プリセットから向きを外す
+
+指示書: [docs/instructions/2026-11-16_recipe-set-shooting.md](docs/instructions/2026-11-16_recipe-set-shooting.md)。
+ブランチ `claude/recipe-20261116`。API は `usb-app/API.md` 4.5（プリセット）・4.6（レシピ）。
+
+- **プリセットは向き（`hflip`/`vflip`）を持たない**（ユーザー決定）。`load` でボードは再起動しない。
+  `config.json` には向きを残す: `settings_to_json_locked(o, orientation)` は config.json とプリセットの
+  両方が使うので、引数で分けている。古い `presets.json` の向きキーは読むときに落とす。
+  向きだけの変更では `preset_modified` を立てない。
+- **レシピ**: `common/camcore/recipe.c`（保存と検査だけ。実行は Web UI）。`/cfg/recipes.json`、20 件・各 30 ステップ、
+  1 件 12 kB まで。ファイル全体は 240 kB まで読む（PSRAM）。保存時に省略キーを既定値で埋めて記録する。
+  FS と名前の規則は camctl.c と共有（`cfgstore.h`: `cfg_fs_ok` / `cfg_read_json` / `cfg_write_file` /
+  `cfg_name_ok` / `cfg_query_text`）。カメラがあるときだけ登録（camctl と同じ）。
+- **フェーズ0（ボディ受け取り）の判定**: 方式は **POST + JSON ボディ**に決めた。根拠: PC サーバー
+  （`usb-app/pc/server.py`）は `await req.body()` をそのまま `httpch.request` に渡し、`Content-Length`
+  付きでボードへ送る。ボード側は新規ハンドラで `httpd_req_recv` を回せば読める（既存ハンドラはクエリのみ）。
+  検査ロジックは PC 上で cJSON と組んで単体確認済み。
+  **実機での確認は未実施**（2026-11-16 時点でボード未接続）: wifi-app 直接と usb-app 中継の両方で
+  `curl -X POST .../recipes/save -d @recipe.json` が通ることを確かめること。
+
 ## 000. 2026-11-11: ボード交換・2 アプリへの分岐
 
 - **ボードを交換した**。2026-11-10 に自作セレクタへ 12V を誤って通電し、旧ボード（rev v1.3）は USB が認識されなくなった。

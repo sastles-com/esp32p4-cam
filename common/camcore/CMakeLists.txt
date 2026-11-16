@@ -1,6 +1,6 @@
 # camcore: shared by the apps. A project pulls it in with camcore_project.cmake.
 idf_component_register(
-    SRCS "camcore.c" "camctl.c" "ioexp.c" "shot.c"
+    SRCS "camcore.c" "camctl.c" "ioexp.c" "shot.c" "recipe.c"
     INCLUDE_DIRS "include"
     # The page served at "/": one file shared by every app.
     EMBED_TXTFILES "${CMAKE_CURRENT_LIST_DIR}/../webui/index.html"
