@@ -2,11 +2,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>esp32p4-cam</title>
 <style>
- :root{color-scheme:dark light;--bg:#14161a;--fg:#e8e8ea;--mut:#8b8f98;--card:#1d2026;--acc:#4da3ff;--ok:#4cc38a;--bad:#ff6b6b}
+ :root{color-scheme:dark light;--bg:#14161a;--fg:#e8e8ea;--mut:#8b8f98;--card:#1d2026;--acc:#4da3ff;--ok:#4cc38a;--bad:#ff6b6b;--line:#8884}
  @media (prefers-color-scheme:light){:root{--bg:#f4f5f7;--fg:#1b1d22;--mut:#667;--card:#fff;--acc:#1a73e8;--ok:#1e8e5a;--bad:#d33}}
  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
- main{max-width:1200px;margin:0 auto;padding:16px;display:grid;grid-template-columns:1fr 300px;gap:16px}
- @media(max-width:860px){main{grid-template-columns:1fr}}
+ main{max-width:1400px;margin:0 auto;padding:16px;display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start}
+ main.wide{grid-template-columns:minmax(0,1fr) minmax(0,1.3fr)}
+ @media(max-width:860px){main,main.wide{grid-template-columns:minmax(0,1fr)}}
  .card{background:var(--card);border-radius:10px;padding:12px}
  #view{width:100%;aspect-ratio:16/9;background:#000;border-radius:8px;display:block;object-fit:contain}
  label{display:block;margin:10px 0 4px;color:var(--mut);font-size:12px}
@@ -19,14 +20,14 @@
  #gal a{display:block}#gal img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:4px;display:block}
  h2{font-size:13px;margin:14px 0 0;color:var(--mut);font-weight:600}
  .hint{color:var(--mut);font-size:12px;margin-top:6px}
- #ctl{margin-top:14px;border-top:1px solid #8884;padding-top:4px}
- #ctl.off{opacity:.45;pointer-events:none}
+ .off{opacity:.45;pointer-events:none}
  .row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px}
  .row h3{font-size:13px;margin:0;font-weight:600}
  .val{font-variant-numeric:tabular-nums;color:var(--fg)}
  .sw{display:inline-flex;border:1px solid #8886;border-radius:7px;overflow:hidden}
  .sw button{border:0;background:transparent;color:var(--mut);padding:4px 10px;font:inherit;font-size:12px;cursor:pointer}
  .sw button.on{background:var(--acc);color:#fff}
+ .sw button:disabled{opacity:.4;cursor:default}
  .chk{display:inline-flex;align-items:center;gap:4px;margin:0;color:var(--mut);font-size:12px}
  .chk input{width:auto}
  input[type=range]:disabled{opacity:.4}
@@ -36,40 +37,70 @@
  #cmsg{min-height:1.4em;font-size:12px;margin-top:6px}
  .pv{position:relative}
  #wbbox{position:absolute;left:37.5%;top:37.5%;width:25%;height:25%;border:1px dashed #fff8;pointer-events:none;display:none}
- #lt{margin-top:14px;border-top:1px solid #8884;padding-top:4px}
- #lt .sw button:disabled{opacity:.4;cursor:default}
- #pre{margin-top:14px;border-top:1px solid #8884;padding-top:4px}
+ .pvset{display:grid;grid-template-columns:1fr 1fr;gap:12px}
  .pbtns{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
- .pbtns button{padding:4px 10px;border:1px solid #8886;border-radius:7px;background:transparent;color:var(--fg);font:inherit;font-size:12px;cursor:pointer}
- .pbtns button:disabled{opacity:.4;cursor:default}
- #pmod{color:var(--bad);font-size:12px}
+ .pbtns button,.mini{padding:4px 10px;border:1px solid #8886;border-radius:7px;background:transparent;color:var(--fg);font:inherit;font-size:12px;cursor:pointer}
+ .pbtns button:disabled,.mini:disabled{opacity:.4;cursor:default}
+ #pmod,#rmod{color:var(--bad);font-size:12px}
  #reset{color:var(--mut);font-size:11px;background:none;border:0;padding:0;margin-top:8px;cursor:pointer;text-decoration:underline}
+ /* タブ */
+ .tabs{display:flex;gap:2px;margin-top:12px;border-bottom:1px solid var(--line);overflow-x:auto}
+ .tabs button{border:0;background:transparent;color:var(--mut);padding:8px 10px;font:inherit;font-size:13px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+ .tabs button.on{color:var(--fg);border-bottom-color:var(--acc);font-weight:600}
+ .tab{display:none}.tab.on{display:block}
+ /* 照明の出力 */
+ .chs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}
+ .chs button{padding:8px 0;border:1px solid #8886;border-radius:7px;background:transparent;color:var(--mut);font:inherit;font-size:12px;cursor:pointer}
+ .chs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+ .chs button:disabled{opacity:.4;cursor:default}
+ /* ステップ表 */
+ .tblwrap{overflow-x:auto;margin-top:8px;border:1px solid var(--line);border-radius:8px}
+ table.steps{border-collapse:collapse;font-size:12px;width:100%}
+ table.steps caption{caption-side:top;text-align:left;padding:6px 8px;color:var(--mut);font-size:12px}
+ table.steps th,table.steps td{padding:3px 4px;border-top:1px solid var(--line);text-align:center;white-space:nowrap}
+ table.steps th{color:var(--mut);font-weight:600;background:#8881}
+ table.steps input[type=number]{width:72px;padding:3px 4px;font-size:12px}
+ table.steps input.s{width:52px}
+ table.steps input[type=checkbox]{width:auto;margin:0}
+ table.steps tr.dis td:not(:first-child):not(:nth-child(2)){opacity:.45}
+ .lo{display:inline-flex;gap:1px;align-items:center}
+ .lo span{display:inline-flex;flex-direction:column;align-items:center;font-size:9px;color:var(--mut)}
+ .ops button{padding:1px 5px;border:1px solid #8886;border-radius:5px;background:transparent;color:var(--fg);font-size:11px;cursor:pointer}
+ .runbar{display:flex;gap:8px;margin-top:12px}
+ .runbar button{flex:1;padding:10px;border-radius:8px;font:inherit;font-weight:600;cursor:pointer}
+ #rrun{border:0;background:var(--ok);color:#fff}#rrun:disabled{opacity:.5;cursor:default}
+ #rstop{border:1px solid var(--bad);background:transparent;color:var(--bad)}#rstop:disabled{opacity:.4;cursor:default}
+ #rprog{min-height:2.6em}
+ /* レシピの結果 */
+ .rgal{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-top:8px}
+ .rgal figure{margin:0;font-size:11px;color:var(--mut)}
+ .rgal img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:4px;display:block}
+ .rgal figure.ng{border:1px dashed var(--bad);border-radius:4px;padding:6px;color:var(--bad)}
+ .rgal figcaption{margin-top:3px;line-height:1.4;word-break:break-all}
 </style>
-<main>
+<main id="main">
  <section class="card">
   <div class="pv"><img id="view" alt="preview"><div id="wbbox" title="白を合わせる範囲"></div></div>
   <div class="hint" id="pinfo"></div>
+  <div class="pvset">
+   <div><label for="n">プレビューのサイズ</label>
+    <select id="n"><option value="4">480×264</option><option value="8" selected>960×536</option>
+     <option value="12">1440×792</option><option value="16">1920×1080</option></select></div>
+   <div><label for="pq">プレビューの画質 <span id="pqv"></span></label>
+    <input id="pq" type="range" min="10" max="95" value="50"></div>
+  </div>
  </section>
  <aside class="card">
   <button id="shot">シャッター (Space)</button>
   <div id="msg"></div>
-  <label for="n">プレビューのサイズ</label>
-  <select id="n"><option value="4">480×264</option><option value="8" selected>960×536</option>
-   <option value="12">1440×792</option><option value="16">1920×1080</option></select>
-  <label for="pq">プレビューの画質 <span id="pqv"></span></label>
-  <input id="pq" type="range" min="10" max="95" value="50">
-  <div id="pre" style="display:none">
-   <div class="row"><h3>プリセット (試験片ごとの設定)</h3><span id="pmod"></span></div>
-   <select id="preset"></select>
-   <div class="pbtns"><button id="psave" title="今の設定を、選んでいるプリセットに上書きする">上書き保存</button>
-    <button id="psaveas">名前を付けて保存</button><button id="pren">名前変更</button><button id="pdel">削除</button></div>
-   <div class="hint">露出・ゲイン・ピント・WB・撮影の画質と照明を保存します。向きとプレビューのサイズ・画質は含みません。</div>
-  </div>
-  <div id="lt">
-   <div class="row"><h3>照明</h3>
-    <span class="sw" id="ltsw"><button data-v="on" disabled>ON</button><button data-v="off" disabled>OFF</button></span></div>
-   <div class="hint" id="ltv">照明の状態を読んでいます…</div>
-  </div>
+  <nav class="tabs" id="tabs">
+   <button data-tab="cam">カメラ</button><button data-tab="light">照明</button><button data-tab="preset">プリセット</button>
+   <button data-tab="recipe">レシピ</button><button data-tab="photo">写真 <span id="phcount"></span></button>
+  </nav>
+  <div id="cmsg"></div>
+
+  <!-- カメラ -->
+  <div class="tab" id="tab-cam">
   <div id="ctl" class="off">
    <div class="row"><h3>露出</h3>
     <span class="sw" id="expsw"><button data-v="auto">Auto</button><button data-v="manual">Manual</button></span></div>
@@ -99,16 +130,86 @@
    <div class="row" id="orirow"><h3>向き</h3>
     <span style="display:inline-flex;gap:10px"><label class="chk"><input id="hflip" type="checkbox">左右反転</label>
      <label class="chk"><input id="vflip" type="checkbox">上下反転</label></span></div>
-   <div id="cmsg"></div>
    <button id="reset">設定をリセット</button>
   </div>
-  <h2>撮影した写真 <span style="font-weight:400">(クリックで保存)</span></h2><div id="gal"></div>
+  </div>
+
+  <!-- 照明 -->
+  <div class="tab" id="tab-light">
+  <div id="lt">
+   <div class="row"><h3>照明</h3>
+    <span class="sw" id="ltsw"><button data-v="on" disabled>ON</button><button data-v="off" disabled>OFF</button></span></div>
+   <div class="hint" id="ltv">照明の状態を読んでいます…</div>
+   <div class="row"><h3>出力ごと (OUT0〜OUT7)</h3><span class="hint" id="outv" style="margin:0"></span></div>
+   <div class="chs" id="chs"></div>
+   <div class="hint">押すとその出力だけを切り替えます。どの出力が照明かはボードの配線 (pins.h の LIGHT_MASK) で決まります。</div>
+  </div>
+  </div>
+
+  <!-- プリセット -->
+  <div class="tab" id="tab-preset">
+  <div id="pre" style="display:none">
+   <div class="row"><h3>プリセット (試験片ごとの設定)</h3><span id="pmod"></span></div>
+   <select id="preset"></select>
+   <div class="pbtns"><button id="psave" title="今の設定を、選んでいるプリセットに上書きする">上書き保存</button>
+    <button id="psaveas">名前を付けて保存</button><button id="pren">名前変更</button><button id="pdel">削除</button></div>
+   <div class="hint">露出・ゲイン・ピント・WB・撮影の画質と照明を保存します。向きとプレビューのサイズ・画質は含みません。</div>
+   <div class="pbtns" style="margin-top:12px"><button id="pexp" title="ボードに保存されているプリセット全件を presets.json として保存">JSON で書き出す (全件)</button></div>
+  </div>
+  <div id="prenone" class="hint">このファームウェアはプリセットに対応していません。</div>
+  </div>
+
+  <!-- レシピ -->
+  <div class="tab" id="tab-recipe">
+  <div id="rcp" style="display:none">
+   <div id="redit">
+   <div class="row"><h3>レシピ (セット撮影)</h3><span id="rmod"></span></div>
+   <select id="rsel"></select>
+   <div class="pbtns"><button id="rsave">保存</button><button id="rren">名前変更</button><button id="rdel">削除</button>
+    <button id="rexp1" title="選んでいるレシピ (ボードの保存内容) を JSON で保存">JSON (このレシピ)</button>
+    <button id="rexpall" title="ボードに保存されているレシピ全件を recipes.json として保存">JSON (全件)</button></div>
+   <div class="pvset">
+    <div><label for="rname">レシピ名</label><input id="rname" maxlength="48" placeholder="例: 露出ブラケット5段"></div>
+    <div><label for="rbase">土台のプリセット</label><select id="rbase"></select></div>
+   </div>
+   <div class="tblwrap"><table class="steps" id="steps"></table></div>
+   <div class="pbtns"><button id="radd">行を追加</button></div>
+   <div class="hint">値を入れた項目はその行で Manual になります。シャッターかゲインを入れると露出とゲインの両方が Manual になり、空欄の方はその時点の値で固定されます (明るさが自動で戻らないように)。前の行の指定は次の行に持ち越しません。
+    照明の「指定」を外した行は照明を操作しません。</div>
+   </div>
+   <div class="runbar"><button id="rrun">▶ 実行</button><button id="rstop" disabled>■ 中断</button></div>
+   <div class="hint" id="rprog"></div>
+  </div>
+  <div id="rnone" class="hint">このファームウェアはレシピに対応していません。</div>
+  </div>
+
+  <!-- 写真 -->
+  <div class="tab" id="tab-photo">
+   <div id="runsec" style="display:none">
+    <div class="row"><h3>レシピの結果</h3></div>
+    <div class="hint" id="runinfo"></div>
+    <div class="pbtns"><button id="rdlall">写真を全部保存</button><button id="rmani">マニフェスト (JSON)</button></div>
+    <div class="rgal" id="rgal"></div>
+   </div>
+   <h2>撮影した写真 <span style="font-weight:400">(クリックで保存。新しい 12 枚)</span></h2><div id="gal"></div>
+  </div>
  </aside>
 </main>
 <script>
 const $=id=>document.getElementById(id), LS=window.localStorage||{};
 const get=(k,d)=>{try{return LS.getItem(k)??d}catch(e){return d}}, put=(k,v)=>{try{LS.setItem(k,v)}catch(e){}};
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 $('n').value=get('n','8'); $('pq').value=get('pq','50');
+// ---- タブ (選んだタブは表示上の便宜として localStorage に覚える) ----
+function showTab(t){
+  if(!$('tab-'+t))t='cam';
+  for(const b of $('tabs').children)b.classList.toggle('on',b.dataset.tab===t);
+  for(const d of document.querySelectorAll('.tab'))d.classList.toggle('on',d.id==='tab-'+t);
+  $('main').classList.toggle('wide',t==='recipe'||t==='photo');
+  put('tab',t);
+}
+for(const b of $('tabs').children)b.onclick=()=>{b.blur();showTab(b.dataset.tab)};
+showTab(get('tab','cam'));
 // プレビューは別ポート (:81) の MJPEG。この画面はボード自身が配信しているので、アドレスは location から。
 // 別の中継 (USB ブリッジなど) が同じ画面を配信する場合は、window.STREAM_URL で上書きできる。
 function previewUrl(){
@@ -162,11 +263,9 @@ async function shutter(){
     const blob=shot.blob;
     const sec=((performance.now()-t0)/1000).toFixed(1);
     const name=stamp(new Date())+'.jpg';
-    shots.unshift({name,url:URL.createObjectURL(blob)});
-    if(shots.length>12)URL.revokeObjectURL(shots.pop().url);
+    addShot(name,blob);
     $('msg').className='ok';
     $('msg').textContent=`${name}  ${(blob.size/1000).toFixed(0)} kB  ${sec} 秒${shot.light?'':'  (照明なし)'}`;
-    renderGallery();
   }catch(e){$('msg').className='bad';$('msg').textContent='失敗: '+e.message}
   busy=false; $('shot').disabled=false; startPreview();
 }
@@ -176,6 +275,13 @@ $('shot').onclick=shutter;
 async function api(method,path,params){
   const qs=new URLSearchParams(params||{}).toString();
   const r=await fetch(`${path}${qs?'?'+qs:''}`,{method});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error||j.detail||r.statusText);
+  return j;
+}
+// JSON ボディで POST (レシピの保存)
+async function apiJson(path,obj){
+  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj)});
   const j=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(j.error||j.detail||r.statusText);
   return j;
@@ -198,7 +304,8 @@ async function loadCaps(){
   $('foc').min=caps.focus.min; $('foc').max=caps.focus.max;
   $('wbsec').style.display=caps.wb?'':'none'; $('wbbox').style.display=caps.wb?'block':'none';
   if(caps.wb){ for(const id of ['wbr','wbb']){$(id).min=caps.wb.min; $(id).max=caps.wb.max} }
-  $('ctl').classList.remove('off'); cmsg('');
+  if(!running)$('ctl').classList.remove('off'); cmsg('');
+  renderSteps();   // 入力欄の範囲を caps に合わせる
   poll();
 }
 function render(s){
@@ -284,13 +391,17 @@ $('afbtn').onclick=async()=>{
 };
 // ---- 照明 (ボードの /io)。どの出力が照明かはボード側 (pins.h の LIGHT_MASK) が決める ----
 // ON にしたままシャッターを押すと、照明は点いたまま撮る (撮影後も消えない)。
-let ltTimer=null;
+let ltTimer=null, io=null;
+$('chs').innerHTML=[0,1,2,3,4,5,6,7].map(i=>`<button data-ch="${i}" disabled>OUT${i}</button>`).join('');
 function renderLight(j){
+  io=j;
   const ok=!!j.present;
   for(const b of $('ltsw').children)b.disabled=!ok;
   setSw('ltsw',ok?(j.light?'on':'off'):'');
   $('ltv').className='hint'+(ok?'':' bad');
   $('ltv').textContent=ok?(j.light?'点灯中 (撮影しても点いたまま)':st&&st.shot_light===false?'消灯中 (撮影でも点けない設定)':'消灯中 (撮影の間だけ点く)'):'照明ボード (MCP23017) が見つかりません';
+  for(const b of $('chs').children){ b.disabled=!ok; b.classList.toggle('on',ok&&!!(j.out>>b.dataset.ch&1)) }
+  $('outv').textContent=ok?`out = ${j.out} (0x${j.out.toString(16).padStart(2,'0')})`:'';
 }
 async function pollLight(){
   clearTimeout(ltTimer);
@@ -302,6 +413,11 @@ for(const b of $('ltsw').children)b.onclick=async()=>{
   b.blur();
   try{ renderLight(await api('POST','/io',{light:b.dataset.v==='on'?1:0})) }
   catch(e){ $('ltv').className='hint bad'; $('ltv').textContent='照明を切り替えられません: '+e.message }
+};
+for(const b of $('chs').children)b.onclick=async()=>{
+  b.blur(); const ch=+b.dataset.ch, on=io&&(io.out>>ch&1)?0:1;
+  try{ renderLight(await api('POST','/io',{ch,on})) }
+  catch(e){ $('ltv').className='hint bad'; $('ltv').textContent='出力を切り替えられません: '+e.message }
 };
 // ---- 向き (センサーで反転)。ボードは設定を保存して再起動し、起動時に反映する ----
 async function setFlip(key){
@@ -334,16 +450,23 @@ $('reset').onclick=async()=>{
     await waitBoard(); flipping=false; startPreview(); loadCaps();
   }
 };
+// ---- ファイルとして保存 (JSON の書き出し、写真) ----
+function download(name,data,type){
+  const blob=data instanceof Blob?data:new Blob([data],{type:type||'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),10000);
+}
+const json=o=>JSON.stringify(o,null,2)+'\n';
 // ---- プリセット (ボードに保存。/presets) ----
 // 選ぶとその設定を読み込む。プリセットは向きを持たないので、読み込みでボードは再起動しない。
 let presets=[], presetBusy=false;
 function renderPresets(){
   const sel=$('preset'), act=st&&st.preset;
-  sel.innerHTML='<option value="">(プリセットなし)</option>'+presets.map(p=>{
-    const n=p.name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-    return `<option value="${n}">${n}</option>`}).join('');
+  sel.innerHTML='<option value="">(プリセットなし)</option>'+presets.map(p=>`<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
   sel.value=act&&presets.some(p=>p.name===act)?act:'';
   renderPresetState(st);
+  renderBaseOptions();
 }
 function renderPresetState(s){
   if(!s||!('preset' in s))return;
@@ -356,8 +479,8 @@ function renderPresetState(s){
 let presetsLoading=false;
 async function loadPresets(){
   if(presetsLoading)return; presetsLoading=true;
-  try{ const j=await api('GET','/presets'); presets=j.presets; $('pre').style.display=''; renderPresets() }
-  catch(e){ $('pre').style.display='none' }   // 古いファーム
+  try{ const j=await api('GET','/presets'); presets=j.presets; $('pre').style.display=''; $('prenone').style.display='none'; renderPresets() }
+  catch(e){ $('pre').style.display='none'; $('prenone').style.display='' }   // 古いファーム
   presetsLoading=false;
 }
 async function presetOp(fn,okMsg){
@@ -393,11 +516,300 @@ $('pdel').onclick=()=>{
   if(!confirm(`プリセット「${name}」を削除しますか? (今の設定はそのまま)`))return;
   presetOp(()=>api('POST','/presets/delete',{name}),`「${name}」を削除しました`);
 };
-document.addEventListener('keydown',e=>{if(e.code==='Space'&&!/INPUT|SELECT/.test(document.activeElement.tagName)){e.preventDefault();shutter()}});
-const shots=[];   // この画面で撮った写真 (ブラウザのメモリ上。ページを閉じると消える)
-function renderGallery(){
-  $('gal').innerHTML=shots.map(s=>`<a href="${s.url}" download="${s.name}" title="${s.name} (クリックで保存)"><img src="${s.url}"></a>`).join('');
+// 書き出しはボードの保存内容 (presets.json と同じ形)
+$('pexp').onclick=async()=>{
+  $('pexp').blur();
+  try{ const j=await api('GET','/presets'); download('presets.json',json({version:1,presets:j.presets})) }
+  catch(e){ cmsg('プリセットを読めません: '+e.message,'bad') }
+};
+
+// ---- レシピ (ボードに保存。/recipes。実行はこの画面が行う) ----
+// 表の 1 行 = 1 ステップ。空欄は土台 (base_preset、または実行開始時の設定) を継承する。
+const KEYS9=['exposure_mode','exposure_us','gain_mode','gain_index','focus_mode','focus_pos','wb_mode','wb_red','wb_blue'];
+const Q_DEF=95, SETTLE_DEF=800;
+let recipes=[], maxSteps=30, recipesOk=false, editing=null, rdirty=false, running=false, abortRun=false;
+const newRow=(prev)=>({enabled:true,exp:'',gain:'',foc:'',wbr:'',wbb:'',light:null,
+  q:prev?prev.q:Q_DEF,settle:prev?prev.settle:SETTLE_DEF,extra:{}});
+// 保存形のステップ -> 表の行。値から読み取れる「manual」は表に出さず、それ以外の指定は extra に残す
+function stepToRow(s){
+  const ov=Object.assign({},s.overrides||{}), r=newRow();
+  r.enabled=s.enabled!==false; r.q=s.q??Q_DEF; r.settle=s.settle_ms??SETTLE_DEF;
+  r.light=s.light_out==null?null:s.light_out;
+  const take=(k,f)=>{ if(k in ov){ r[f]=String(ov[k]); delete ov[k] } };
+  take('exposure_us','exp'); take('gain_index','gain'); take('focus_pos','foc'); take('wb_red','wbr'); take('wb_blue','wbb');
+  if(ov.exposure_mode==='manual'&&(r.exp!==''||r.gain!==''))delete ov.exposure_mode;
+  if(ov.gain_mode==='manual'&&(r.exp!==''||r.gain!==''))delete ov.gain_mode;
+  if(ov.focus_mode==='manual'&&r.foc!=='')delete ov.focus_mode;
+  if(ov.wb_mode==='manual'&&(r.wbr!==''||r.wbb!==''))delete ov.wb_mode;
+  r.extra=ov; return r;
 }
+function rowToStep(r){
+  const ov=Object.assign({},r.extra), n=v=>v===''?null:Math.round(+v);
+  // シャッターだけ Manual だと、ボードはゲインを自動で合わせる (シャッター優先) ので明るさが変わらない。ゲインも固定する
+  if(r.exp!==''){ ov.exposure_mode='manual'; ov.gain_mode='manual'; ov.exposure_us=n(r.exp) }
+  if(r.gain!==''){ ov.exposure_mode='manual'; ov.gain_mode='manual'; ov.gain_index=n(r.gain) }
+  if(r.foc!==''){ ov.focus_mode='manual'; ov.focus_pos=n(r.foc) }
+  if(r.wbr!==''||r.wbb!==''){ ov.wb_mode='manual'; if(r.wbr!=='')ov.wb_red=n(r.wbr); if(r.wbb!=='')ov.wb_blue=n(r.wbb) }
+  return {enabled:r.enabled,overrides:ov,light_out:r.light,q:r.q===''?Q_DEF:Math.round(+r.q),settle_ms:r.settle===''?SETTLE_DEF:Math.round(+r.settle)};
+}
+function editorRecipe(){
+  return {name:$('rname').value.trim(),base_preset:$('rbase').value||null,steps:editing.rows.map(rowToStep)};
+}
+function setEditing(rec){   // rec: 保存形のレシピ、または null (新規)
+  editing={saved:rec?rec.name:null,rows:rec?rec.steps.map(stepToRow):[newRow()]};
+  $('rname').value=rec?rec.name:''; renderBaseOptions(rec?rec.base_preset:null);
+  rdirty=false; renderSteps(); renderRecipeState();
+}
+function markDirty(){ rdirty=true; renderRecipeState() }
+function renderBaseOptions(sel){
+  const cur=sel!==undefined?sel:$('rbase').value;
+  const names=presets.map(p=>p.name); if(cur&&!names.includes(cur))names.push(cur);   // 消えたプリセットも表示は残す
+  $('rbase').innerHTML='<option value="">(なし: 実行開始時の設定)</option>'+names.map(n=>
+    `<option value="${esc(n)}">${esc(n)}${presets.some(p=>p.name===n)?'':' (見つかりません)'}</option>`).join('');
+  $('rbase').value=cur||'';
+}
+function renderRecipeList(){
+  const cur=editing&&editing.saved;
+  $('rsel').innerHTML='<option value="">(新しいレシピ)</option>'+recipes.map(r=>`<option value="${esc(r.name)}">${esc(r.name)} (${r.steps.length})</option>`).join('');
+  $('rsel').value=cur&&recipes.some(r=>r.name===cur)?cur:'';
+}
+function renderRecipeState(){
+  const saved=editing&&editing.saved;
+  $('rmod').textContent=rdirty?'未保存の変更あり':'';
+  $('rren').disabled=$('rdel').disabled=$('rexp1').disabled=!saved;
+  $('radd').disabled=!editing||editing.rows.length>=maxSteps;
+  $('rrun').disabled=running||!editing||!editing.rows.some(r=>r.enabled);
+  $('rstop').disabled=!running||abortRun;
+  $('redit').classList.toggle('off',running);
+}
+function rng(c,lo,hi){return c?`min="${c[lo]}" max="${c[hi]}"`:''}
+function renderSteps(){
+  if(!editing)return;
+  const ce=caps&&caps.exposure_us, cg=caps&&caps.gain, cf=caps&&caps.focus, cw=caps&&caps.wb;
+  const num=(i,f,attr,cls,ph)=>`<input type="number" data-i="${i}" data-f="${f}" value="${esc(editing.rows[i][f])}" ${attr||''} ${cls?`class="${cls}"`:''} placeholder="${ph??'—'}">`;
+  let h=`<caption>空欄は土台を継承 (土台: プリセット、または「なし」なら実行開始時の設定)</caption>
+<tr><th>#</th><th>有効</th><th title="µs">シャッター µs</th><th title="gain_index">ゲイン</th><th>ピント</th><th>WB 赤</th><th>WB 青</th>
+<th title="OUT0〜OUT7。「指定」を外すと照明を操作しない">照明</th><th>画質</th><th>待機 ms</th><th></th></tr>`;
+  editing.rows.forEach((r,i)=>{
+    const extra=Object.keys(r.extra).length?` title="ほかの指定: ${esc(JSON.stringify(r.extra))}"`:'';
+    const lo=[0,1,2,3,4,5,6,7].map(b=>`<span>${b}<input type="checkbox" data-i="${i}" data-bit="${b}" ${r.light!=null&&(r.light>>b&1)?'checked':''} ${r.light==null?'disabled':''}></span>`).join('');
+    h+=`<tr class="${r.enabled?'':'dis'}"><td${extra}>${String(i+1).padStart(2,'0')}${extra?'*':''}</td>
+<td><input type="checkbox" data-i="${i}" data-f="enabled" ${r.enabled?'checked':''}></td>
+<td>${num(i,'exp',rng(ce,'min','max'))}</td><td>${num(i,'gain',rng(cg,'min','max'),'s')}</td>
+<td>${num(i,'foc',rng(cf,'min','max'),'s')}</td><td>${num(i,'wbr',rng(cw,'min','max'),'s')}</td><td>${num(i,'wbb',rng(cw,'min','max'),'s')}</td>
+<td><span class="lo"><label class="chk" style="font-size:11px;margin-right:4px"><input type="checkbox" data-i="${i}" data-f="lighton" ${r.light!=null?'checked':''}>指定</label>${lo}</span></td>
+<td>${num(i,'q','min="1" max="100"','s',Q_DEF)}</td><td>${num(i,'settle','min="0" max="60000" step="100"','s',SETTLE_DEF)}</td>
+<td class="ops"><button data-i="${i}" data-op="up" title="上へ">↑</button><button data-i="${i}" data-op="down" title="下へ">↓</button><button data-i="${i}" data-op="dup" title="複製">⧉</button><button data-i="${i}" data-op="del" title="削除">✕</button></td></tr>`;
+  });
+  $('steps').innerHTML=h;
+  renderRecipeState();
+}
+$('steps').addEventListener('input',e=>{
+  const t=e.target, i=+t.dataset.i; if(!editing||isNaN(i))return; const r=editing.rows[i];
+  if(t.dataset.bit!==undefined){ const b=+t.dataset.bit; r.light=(r.light||0)&~(1<<b)|(t.checked?1<<b:0) }
+  else if(t.dataset.f==='enabled'){ r.enabled=t.checked; t.closest('tr').className=r.enabled?'':'dis' }
+  else if(t.dataset.f==='lighton'){ r.light=t.checked?0:null; renderSteps() }
+  else if(t.dataset.f){ r[t.dataset.f]=t.value.trim() }
+  markDirty();
+});
+$('steps').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b||!editing)return; b.blur();
+  const i=+b.dataset.i, rows=editing.rows;
+  if(b.dataset.op==='up'&&i>0)[rows[i-1],rows[i]]=[rows[i],rows[i-1]];
+  else if(b.dataset.op==='down'&&i<rows.length-1)[rows[i+1],rows[i]]=[rows[i],rows[i+1]];
+  else if(b.dataset.op==='dup'&&rows.length<maxSteps)rows.splice(i+1,0,JSON.parse(JSON.stringify(rows[i])));
+  else if(b.dataset.op==='del'){ rows.splice(i,1); if(!rows.length)rows.push(newRow()) }
+  else return;
+  markDirty(); renderSteps();
+});
+$('radd').onclick=()=>{ $('radd').blur(); const rows=editing.rows; if(rows.length>=maxSteps)return; rows.push(newRow(rows[rows.length-1])); markDirty(); renderSteps() };
+$('rname').oninput=markDirty; $('rbase').onchange=()=>{ $('rbase').blur(); markDirty() };
+async function loadRecipes(){
+  try{
+    const j=await api('GET','/recipes'); recipes=j.recipes; maxSteps=j.max_steps||30; recipesOk=true;
+    $('rcp').style.display=''; $('rnone').style.display='none';
+    if(!editing)setEditing(null);
+    renderRecipeList();
+  }catch(e){ recipesOk=false; $('rcp').style.display='none'; $('rnone').style.display='' }
+}
+$('rsel').onchange=()=>{
+  const name=$('rsel').value; $('rsel').blur();
+  if(rdirty&&!confirm('編集中のレシピの変更は保存されていません。破棄しますか?')){ renderRecipeList(); return }
+  setEditing(name?recipes.find(r=>r.name===name):null); renderRecipeList();
+};
+$('rsave').onclick=async()=>{
+  $('rsave').blur(); const rec=editorRecipe();
+  if(!rec.name){ cmsg('レシピ名を入れてください','bad'); $('rname').focus(); return }
+  if(rec.name!==editing.saved&&recipes.some(r=>r.name===rec.name)&&!confirm(`「${rec.name}」はもうあります。上書きしますか?`))return;
+  try{
+    const j=await apiJson('/recipes/save',rec); recipes=j.recipes;
+    editing.saved=rec.name; rdirty=false;
+    const saved=recipes.find(r=>r.name===rec.name); if(saved)setEditing(saved);   // ボードが整えた形で読み直す
+    renderRecipeList(); cmsg(`レシピ「${rec.name}」を保存しました`,'ok');
+  }catch(e){ cmsg('レシピを保存できません: '+e.message,'bad') }
+};
+$('rren').onclick=async()=>{
+  $('rren').blur(); const name=editing.saved; if(!name)return;
+  const to=(prompt(`「${name}」の新しい名前`,name)||'').trim(); if(!to||to===name)return;
+  try{ const j=await api('POST','/recipes/rename',{name,to}); recipes=j.recipes; editing.saved=to; $('rname').value=to; renderRecipeList(); renderRecipeState(); cmsg(`「${to}」に名前を変えました`,'ok') }
+  catch(e){ cmsg('レシピ: '+e.message,'bad') }
+};
+$('rdel').onclick=async()=>{
+  $('rdel').blur(); const name=editing.saved; if(!name)return;
+  if(!confirm(`レシピ「${name}」を削除しますか?`))return;
+  try{ const j=await api('POST','/recipes/delete',{name}); recipes=j.recipes; editing.saved=null; rdirty=true; renderRecipeList(); renderRecipeState(); cmsg(`「${name}」を削除しました (編集中の内容は残っています)`,'ok') }
+  catch(e){ cmsg('レシピ: '+e.message,'bad') }
+};
+// 書き出しはボードの保存内容 (recipes.json と同じ形 / レシピ 1 件)
+$('rexpall').onclick=async()=>{
+  $('rexpall').blur();
+  try{ const j=await api('GET','/recipes'); download('recipes.json',json({version:1,recipes:j.recipes})) }
+  catch(e){ cmsg('レシピを読めません: '+e.message,'bad') }
+};
+$('rexp1').onclick=async()=>{
+  $('rexp1').blur(); const name=editing.saved; if(!name)return;
+  try{
+    const j=await api('GET','/recipes'), r=j.recipes.find(r=>r.name===name);
+    if(!r)throw new Error('ボードにありません'); download(safeName(name)+'.json',json(r));
+  }catch(e){ cmsg('レシピを書き出せません: '+e.message,'bad') }
+};
+
+// ---- レシピの実行 ----
+const safeName=s=>s.replace(/[\\/:*?"<>|\s]/g,'_');
+const pad=(n,w)=>String(n).padStart(w||2,'0');
+const ymdhms=d=>`${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+function isoLocal(d){   // 2026-11-16T09:00:00+09:00
+  const o=-d.getTimezoneOffset(), s=o>=0?'+':'-', a=Math.abs(o);
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${s}${pad(a/60|0)}:${pad(a%60)}`;
+}
+const pick9=s=>Object.fromEntries(KEYS9.map(k=>[k,s[k]]));
+// AF が走っていれば終わるまで待つ (ピントを auto に戻すと AF が始まる)
+async function settleAf(s){
+  for(const t0=Date.now();s&&s.af_state==='running'&&Date.now()-t0<20000;){ await sleep(300); s=await api('GET','/ctrl') }
+  return s;
+}
+function describe(step){
+  const o=step.overrides, p=[];
+  if('exposure_us' in o)p.push(`シャッター ${o.exposure_us} µs`);
+  if('gain_index' in o)p.push(`ゲイン ${o.gain_index}`);
+  if('focus_pos' in o)p.push(`ピント ${o.focus_pos}`);
+  if('wb_red' in o||'wb_blue' in o)p.push(`WB ${o.wb_red??'-'}/${o.wb_blue??'-'}`);
+  for(const k of ['exposure_mode','gain_mode','focus_mode','wb_mode'])if(o[k]==='auto')p.push(k.replace('_mode','')+' auto');
+  p.push(step.light_out==null?'照明そのまま':`照明 0x${step.light_out.toString(16).padStart(2,'0')}`);
+  p.push(`q${step.q}`,`${step.settle_ms} ms`);
+  return p.join(' / ');
+}
+let run=null;   // 直近 1 回の実行結果: {manifest, shots:[{name,url,...}]}
+function prog(t,cls){ $('rprog').className='hint'+(cls?' '+cls:''); $('rprog').textContent=t }
+async function runRecipe(){
+  const rec=editorRecipe();
+  if(!rec.name){ cmsg('レシピ名を入れてください (写真のファイル名に使います)','bad'); return }
+  if(rec.base_preset&&!presets.some(p=>p.name===rec.base_preset)){ cmsg(`土台のプリセット「${rec.base_preset}」がボードにありません`,'bad'); return }
+  if(busy)return;
+  const todo=rec.steps.map((s,i)=>({s,no:i+1})).filter(x=>x.s.enabled);
+  running=true; abortRun=false; busy=true; $('shot').disabled=true;
+  ['ctl','pre','lt'].forEach(id=>$(id).classList.add('off')); renderRecipeState();
+  $('view').removeAttribute('src');   // プレビューを止めて、静止画に帯域を譲る
+  if(run)run.shots.forEach(s=>s.url&&URL.revokeObjectURL(s.url));
+  const started=new Date();
+  run={manifest:{recipe:rec.name,base_preset:rec.base_preset,executed_at:isoLocal(started),shots:[]},shots:[]};
+  renderRun(); cmsg('');
+  let ok=0, ng=0, before=null, io0=null, lastErr='';
+  try{
+    prog('実行前の設定を記録しています…');
+    before=await api('GET','/ctrl');
+    try{ const j=await api('GET','/io'); if(j.present)io0=j }catch(e){}
+    if(rec.base_preset){
+      prog(`土台のプリセット「${rec.base_preset}」を読み込んでいます…`);
+      await settleAf(await api('POST','/presets/load',{name:rec.base_preset}));
+    }
+    const base=pick9(await api('GET','/ctrl'));
+    let prev={};
+    for(const [k,{s,no}] of todo.entries()){
+      if(abortRun)break;
+      prog(`ステップ ${k+1} / ${todo.length} (表の ${pad(no)} 行目): ${describe(s)}`);
+      const t=new Date(); let applied=null, lightOut=s.light_out;
+      try{
+        if(s.light_out!=null)await api('POST','/io',{out:s.light_out});
+        // 前のステップで変えた項目を土台に戻し、このステップの指定を重ねる
+        const p={}; for(const key of Object.keys(prev))if(!(key in s.overrides))p[key]=base[key];
+        Object.assign(p,s.overrides); prev=s.overrides;
+        if(Object.keys(p).length)await settleAf(await api('POST','/ctrl',p));
+        await sleep(s.settle_ms);
+        applied=pick9(await api('GET','/ctrl'));
+        if(io0){ try{ lightOut=(await api('GET','/io')).out }catch(e){} }
+        const taken=new Date();
+        const r=await fetch(`/snapshot.jpg?q=${s.q}`);
+        if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.error||r.status+' '+r.statusText) }
+        const blob=await r.blob();
+        const file=`${safeName(rec.name)}_${pad(no)}_${ymdhms(taken)}.jpg`;
+        run.shots.push({name:file,url:URL.createObjectURL(blob),step:no,applied,light_out:lightOut,q:s.q,size:blob.size});
+        run.manifest.shots.push({file,step:no,ok:true,taken_at:isoLocal(taken),applied,light_out:lightOut,q:s.q});
+        ok++;
+      }catch(e){
+        ng++; lastErr=e.message;
+        run.shots.push({name:null,step:no,error:e.message});
+        run.manifest.shots.push({file:null,step:no,ok:false,taken_at:isoLocal(t),error:e.message,applied,light_out:lightOut,q:s.q});
+      }
+      renderRun();
+    }
+  }catch(e){ lastErr=e.message; prog('実行を始められません: '+e.message,'bad') }
+  // 照明とカメラの設定を実行前に戻す (中断・失敗でも)
+  let restoreErr='';
+  if(before){
+    if(io0){ try{ await api('POST','/io',{out:io0.out}) }catch(e){ restoreErr='照明: '+e.message } }
+    try{
+      if(before.preset&&!before.preset_modified&&presets.some(p=>p.name===before.preset))await api('POST','/presets/load',{name:before.preset});
+      else await api('POST','/ctrl',pick9(before));
+    }catch(e){ restoreErr+=(restoreErr?' / ':'')+'カメラ: '+e.message }
+  }
+  const stopped=abortRun;
+  running=false; abortRun=false; busy=false; $('shot').disabled=false;
+  ['ctl','pre','lt'].forEach(id=>$(id).classList.remove('off')); if(!caps)$('ctl').classList.add('off');
+  renderRecipeState(); renderRun(); startPreview(); poll(); pollLight();
+  if(before){
+    const sum=`${stopped?'中断しました':'完了'}: 成功 ${ok} 枚、失敗 ${ng} 枚 (全 ${todo.length} ステップ)`+
+      (ng?` — 最後の失敗: ${lastErr}`:'')+(restoreErr?` — 設定を戻せませんでした (${restoreErr})`:' — 照明とカメラの設定は実行前に戻しました');
+    prog(sum,ng||restoreErr?'bad':'ok');
+    $('msg').className=ng?'bad':'ok'; $('msg').textContent=`レシピ「${rec.name}」 ${stopped?'中断':'完了'}: 成功 ${ok} / 失敗 ${ng} (「写真」タブ)`;
+  }
+}
+$('rrun').onclick=()=>{ $('rrun').blur(); runRecipe() };
+$('rstop').onclick=()=>{ $('rstop').blur(); abortRun=true; renderRecipeState(); prog($('rprog').textContent+' — 中断します (このステップの後)') };
+function fmtApplied(a){
+  if(!a)return '';
+  const x=1e6/a.exposure_us;
+  return `1/${x>=10?Math.round(x):x.toFixed(1)}s (${a.exposure_us}µs ${a.exposure_mode}) · ゲイン ${a.gain_index} ${a.gain_mode} · ピント ${a.focus_pos} ${a.focus_mode} · WB ${a.wb_red}/${a.wb_blue} ${a.wb_mode}`;
+}
+function renderRun(){
+  $('runsec').style.display=run?'':'none'; if(!run)return;
+  const m=run.manifest, okN=run.shots.filter(s=>s.name).length;
+  $('runinfo').textContent=`「${m.recipe}」 ${m.executed_at}  土台: ${m.base_preset??'(実行開始時の設定)'}  成功 ${okN} / ${run.shots.length}${running?' (実行中)':''}`;
+  $('rgal').innerHTML=run.shots.map(s=>s.name
+    ?`<figure><a href="${s.url}" download="${esc(s.name)}" title="${esc(s.name)} (クリックで保存)"><img src="${s.url}"></a>
+<figcaption><b>${pad(s.step)}</b> ${esc(fmtApplied(s.applied))} · 照明 ${s.light_out==null?'-':'0x'+s.light_out.toString(16).padStart(2,'0')} · q${s.q}<br>${esc(s.name)}</figcaption></figure>`
+    :`<figure class="ng"><b>${pad(s.step)}</b> 失敗: ${esc(s.error)}</figure>`).join('');
+  $('rdlall').disabled=$('rmani').disabled=running||!okN;
+  updateCount();
+}
+$('rdlall').onclick=async()=>{
+  $('rdlall').blur(); if(!run)return;
+  for(const s of run.shots){ if(!s.name)continue; const a=document.createElement('a'); a.href=s.url; a.download=s.name; document.body.appendChild(a); a.click(); a.remove(); await sleep(400) }
+};
+$('rmani').onclick=()=>{ $('rmani').blur(); if(run)download(`${safeName(run.manifest.recipe)}_${ymdhms(new Date(run.manifest.executed_at))}_manifest.json`,json(run.manifest)) };
+
+document.addEventListener('keydown',e=>{if(e.code==='Space'&&!/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)){e.preventDefault();shutter()}});
+const shots=[];   // この画面で撮った写真 (ブラウザのメモリ上。ページを閉じると消える)
+function addShot(name,blob){
+  shots.unshift({name,url:URL.createObjectURL(blob)});
+  if(shots.length>12)URL.revokeObjectURL(shots.pop().url);
+  renderGallery();
+}
+function renderGallery(){
+  $('gal').innerHTML=shots.map(s=>`<a href="${s.url}" download="${esc(s.name)}" title="${esc(s.name)} (クリックで保存)"><img src="${s.url}"></a>`).join('');
+  updateCount();
+}
+function updateCount(){ const n=shots.length+(run?run.shots.filter(s=>s.name).length:0); $('phcount').textContent=n?`(${n})`:'' }
 // ---- 物理ボタンで撮った写真 ----
 // ボタンはボードが照明を点けて撮り、ボードに最新 4 枚まで貯める (/shot/info, /shot.jpg)。
 // 開いている画面がそれを見張り、新しい写真を取り込んで上の一覧に加える。
@@ -416,14 +828,12 @@ async function pollShots(){
       if(!r.ok)continue;                       // 取り込む前にリングから押し出された
       const blob=await r.blob();
       const name=stamp(new Date(Date.now()-s.age_ms))+'-button.jpg';
-      shots.unshift({name,url:URL.createObjectURL(blob)});
-      if(shots.length>12)URL.revokeObjectURL(shots.pop().url);
-      renderGallery();
+      addShot(name,blob);
       $('msg').className='ok';
       $('msg').textContent=`ボタンで撮影: ${name}  ${(blob.size/1000).toFixed(0)} kB${s.light?'':'  (照明なし)'}`;
     }
   }catch(e){}   // 古いファームやボードの再起動中は黙って次を待つ
   setTimeout(pollShots,1500);
 }
-startPreview(); loadCaps(); loadPresets(); pollLight(); pollShots();
+startPreview(); loadCaps(); loadPresets(); loadRecipes(); pollLight(); pollShots();
 </script></html>
