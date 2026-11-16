@@ -4,7 +4,7 @@
 この PC のサーバーを通して、ブラウザや他のプログラムからカメラを操作する。
 
 - 対象: usb-app ファーム（トンネル版 2）と、このリポジトリの `usb-app/pc`
-- 最終更新: 2026-11-13（プリセット、撮影設定 `shot_q`・`shot_light` を追加）
+- 最終更新: 2026-11-16（プリセットから向きを外す）。2026-11-13（プリセット、撮影設定 `shot_q`・`shot_light` を追加）
 
 ## 1. 概要
 
@@ -154,7 +154,8 @@ Web 画面（`common/webui/index.html`）。プレビューの URL を `/stream.
 | `shot_q` | 1〜100 | 撮影の JPEG 品質（範囲外は丸める） |
 | `shot_light` | `0` / `1` | 撮影で照明を点けるか |
 
-- どのキーを変えても、プリセットを選んでいれば `preset_modified` が `true` になる。
+- 向き（`hflip`・`vflip`）以外のキーを変えると、プリセットを選んでいれば `preset_modified` が `true` になる。
+  向きはプリセットに含まれないので、変えても `preset_modified` は変わらない。
 
 - 知らないキーが 1 つでもあると、何も変えずに 400 `{"error":"unknown key"}`。
 - 値の形が違うと 400（例: `{"error":"focus_pos must be an integer"}`）。
@@ -285,8 +286,9 @@ AF を 1 回走らせる（ピントを auto にする）。`202 {"af_state":"ru
 カメラが無いと 404。
 
 プリセットが持つ項目: `exposure_mode`, `exposure_us`, `gain_mode`, `gain_index`, `focus_mode`, `focus_pos`,
-`wb_mode`, `wb_red`, `wb_blue`, `hflip`, `vflip`, `sp`, `shot_q`, `shot_light`（`POST /ctrl` のキーと同じ）。
-照明の今の ON/OFF（`/io`）と、プレビューのサイズ・画質（ブラウザ側）は含まない。
+`wb_mode`, `wb_red`, `wb_blue`, `sp`, `shot_q`, `shot_light`（`POST /ctrl` のキーと同じ。12 項目）。
+向き（`hflip`・`vflip`）、照明の今の ON/OFF（`/io`）、プレビューのサイズ・画質（ブラウザ側）は含まない。
+向きを含んでいた古い `presets.json` は、読むときに向きを無視し、次に書き出すときに落とす。
 
 名前: UTF-8 で 1〜48 バイト（漢字なら 16 文字）。制御文字、`"`、`\` は使えない。クエリでは URL エンコードする。
 違反は 400 `{"error":"name must be 1-48 bytes of text, without \" or \\"}`。最大 20 個。
@@ -299,7 +301,7 @@ AF を 1 回走らせる（ピントを auto にする）。`202 {"af_state":"ru
   "presets": [
     {"name": "試験片A", "exposure_mode": "manual", "exposure_us": 401, "gain_mode": "manual", "gain_index": 46,
      "focus_mode": "manual", "focus_pos": 720, "wb_mode": "manual", "wb_red": 1907, "wb_blue": 1869,
-     "hflip": false, "vflip": false, "sp": "B", "shot_q": 80, "shot_light": true}
+     "sp": "B", "shot_q": 80, "shot_light": true}
   ]
 }
 ```
@@ -317,9 +319,7 @@ AF を 1 回走らせる（ピントを auto にする）。`202 {"af_state":"ru
 プリセットの全項目を適用する。応答は `GET /ctrl` と同じ形（適用後の状態）。無ければ 404 `no such preset`。
 
 - ピントが `auto` のプリセットは、読み込むたびに AF を 1 回走らせる（試験片が替わるため）。
-- **向き（`hflip`・`vflip`）が今と違うプリセットは、保存してボードを再起動する**（2.4。約 3 秒 503）。
-  再起動後はそのプリセットの設定で起動し、`preset` も保たれる。クライアントは読み込む前に、
-  `GET /presets` の値と今の `hflip`・`vflip` を比べれば再起動になるか分かる。
+- 向きはプリセットに含まれないので、読み込んでも向きは変わらず、ボードは再起動しない。
 
 #### `POST /presets/delete?name=…`
 

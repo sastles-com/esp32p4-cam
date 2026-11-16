@@ -564,9 +564,10 @@ static bool wb_onepush_start_locked(void)
 
 /* ---- Persistence (§3.6) ------------------------------------------------- */
 
-/* The settings a preset holds - the same keys as config.json and POST /ctrl.
- * Call with s_lock held. */
-static void settings_to_json_locked(cJSON *o)
+/* The settings as config.json and POST /ctrl name them. config.json keeps the
+ * orientation (orientation = true); a preset does not (it never flips the
+ * image or restarts the board). Call with s_lock held. */
+static void settings_to_json_locked(cJSON *o, bool orientation)
 {
     cJSON_AddStringToObject(o, "exposure_mode", mode_str(s_cfg.exp_mode));
     cJSON_AddStringToObject(o, "gain_mode", mode_str(s_cfg.gain_mode));
@@ -577,8 +578,10 @@ static void settings_to_json_locked(cJSON *o)
     cJSON_AddStringToObject(o, "wb_mode", mode_str(s_cfg.wb_mode));
     cJSON_AddNumberToObject(o, "wb_red", s_cfg.wb_red);
     cJSON_AddNumberToObject(o, "wb_blue", s_cfg.wb_blue);
-    cJSON_AddBoolToObject(o, "hflip", s_cfg.hflip);
-    cJSON_AddBoolToObject(o, "vflip", s_cfg.vflip);
+    if (orientation) {
+        cJSON_AddBoolToObject(o, "hflip", s_cfg.hflip);
+        cJSON_AddBoolToObject(o, "vflip", s_cfg.vflip);
+    }
     char sp[2] = { s_sp_method, 0 };
     cJSON_AddStringToObject(o, "sp", sp);
     cJSON_AddNumberToObject(o, "shot_q", s_cfg.shot_q);
@@ -602,7 +605,7 @@ static void save_now(void)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     cJSON *o = cJSON_CreateObject();
     cJSON_AddNumberToObject(o, "version", CFG_VERSION);
-    settings_to_json_locked(o);
+    settings_to_json_locked(o, true);
     if (s_preset[0]) {
         cJSON_AddStringToObject(o, "preset", s_preset);
         cJSON_AddBoolToObject(o, "preset_modified", s_preset_modified);
@@ -1031,10 +1034,11 @@ typedef struct {
 
 #define SETTINGS_NONE { .hf = -1, .vf = -1 }
 
-static bool settings_any(const settings_t *s)
+/* Any of the keys a preset holds - everything but the orientation. */
+static bool settings_any_preset_key(const settings_t *s)
 {
     return s->has_em || s->has_gm || s->has_fm || s->has_eu || s->has_gi || s->has_fp || s->has_wm ||
-           s->has_wr || s->has_wb || s->has_sq || s->has_sl || s->sp || s->hf >= 0 || s->vf >= 0;
+           s->has_wr || s->has_wb || s->has_sq || s->has_sl || s->sp;
 }
 
 /* A /ctrl query. NULL if fine, else the message for a 400. Nothing is applied
@@ -1099,7 +1103,8 @@ static const char *settings_from_query(const char *q, settings_t *s)
 }
 
 /* A stored preset: every key it has is applied. A key missing (an older
- * preset) or of the wrong type is left as it is now. */
+ * preset) or of the wrong type is left as it is now. hflip / vflip are not
+ * preset keys: presets_read() drops them, and they are not read here. */
 static void settings_from_json(const cJSON *o, settings_t *s)
 {
     const cJSON *it;
@@ -1121,8 +1126,6 @@ static void settings_from_json(const cJSON *o, settings_t *s)
 #undef J_INT
     if ((it = cJSON_GetObjectItem(o, "sp")) && cJSON_IsString(it) &&
         (!strcmp(it->valuestring, "A") || !strcmp(it->valuestring, "B"))) s->sp = it->valuestring[0];
-    if ((it = cJSON_GetObjectItem(o, "hflip")) && cJSON_IsBool(it)) s->hf = cJSON_IsTrue(it);
-    if ((it = cJSON_GetObjectItem(o, "vflip")) && cJSON_IsBool(it)) s->vf = cJSON_IsTrue(it);
     if ((it = cJSON_GetObjectItem(o, "shot_light")) && cJSON_IsBool(it)) { s->has_sl = true; s->sl = cJSON_IsTrue(it); }
 }
 
@@ -1235,7 +1238,7 @@ static esp_err_t ctrl_post_handler(httpd_req_t *req)
     const char *err = settings_from_query(q, &s);
     if (err) return send_error(req, "400 Bad Request", err);
     bool reorient = settings_apply(&s);
-    if (settings_any(&s)) preset_touched();
+    if (settings_any_preset_key(&s)) preset_touched();     /* orientation is not a preset key */
     return reply_and_commit(req, reorient);
 }
 
@@ -1297,13 +1300,15 @@ static esp_err_t reset_handler(httpd_req_t *req)
 
 /* ---- Presets ------------------------------------------------------------ */
 /*
- * presets.json = {"version":1,"presets":[{"name":"…", <settings as config.json>}, …]}
+ * presets.json = {"version":1,"presets":[{"name":"…", <settings as config.json, without hflip / vflip>}, …]}
  * in the order they were first saved. Only the httpd task touches the file
  * (all the handlers below), so it needs no lock of its own; s_preset and
  * s_preset_modified are s_cfg's companions and go under s_lock.
  */
 
-/* The stored list as a cJSON array (never NULL). Entries with a bad name are dropped. */
+/* The stored list as a cJSON array (never NULL). Entries with a bad name are
+ * dropped, and so are hflip / vflip (kept by presets written before presets
+ * left out the orientation): not shown, and gone at the next write. */
 static cJSON *presets_read(void)
 {
     cJSON *o = s_fs_ok ? read_json(PRESETS_FILE) : NULL;
@@ -1318,7 +1323,13 @@ static cJSON *presets_read(void)
     }
     for (int i = cJSON_GetArraySize(arr) - 1; i >= 0; i--) {
         cJSON *n = cJSON_GetObjectItem(cJSON_GetArrayItem(arr, i), "name");
-        if (!cJSON_IsString(n) || !preset_name_ok(n->valuestring)) cJSON_DeleteItemFromArray(arr, i);
+        if (!cJSON_IsString(n) || !preset_name_ok(n->valuestring)) {
+            cJSON_DeleteItemFromArray(arr, i);
+            continue;
+        }
+        cJSON *p = cJSON_GetArrayItem(arr, i);
+        cJSON_DeleteItemFromObject(p, "hflip");
+        cJSON_DeleteItemFromObject(p, "vflip");
     }
     return arr;
 }
@@ -1403,7 +1414,7 @@ static esp_err_t preset_save_handler(httpd_req_t *req)
     cJSON *p = cJSON_CreateObject();
     cJSON_AddStringToObject(p, "name", name);
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    settings_to_json_locked(p);
+    settings_to_json_locked(p, false);
     xSemaphoreGive(s_lock);
     if (i >= 0) cJSON_ReplaceItemInArray(arr, i, p);
     else cJSON_AddItemToArray(arr, p);
@@ -1420,7 +1431,8 @@ static esp_err_t preset_save_handler(httpd_req_t *req)
     return send_presets(req, arr);
 }
 
-/* POST /presets/load?name=… - apply every setting it holds; replies as GET /ctrl. */
+/* POST /presets/load?name=… - apply every setting it holds; replies as GET /ctrl.
+ * A preset holds no orientation, so this never restarts the board. */
 static esp_err_t preset_load_handler(httpd_req_t *req)
 {
     char q[PRESET_QUERY_MAX], name[PRESET_NAME_MAX + 1];
@@ -1436,14 +1448,14 @@ static esp_err_t preset_load_handler(httpd_req_t *req)
     settings_from_json(cJSON_GetArrayItem(arr, i), &s);
     cJSON_Delete(arr);
     s.force_af = true;          /* a new specimen: focus again if the preset says auto */
-    bool reorient = settings_apply(&s);
+    settings_apply(&s);         /* no hf / vf given: never reorients */
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     strlcpy(s_preset, name, sizeof(s_preset));
     s_preset_modified = false;
     xSemaphoreGive(s_lock);
-    ESP_LOGI(TAG, "preset loaded: %s%s", name, reorient ? " (orientation changes - restarting)" : "");
-    return reply_and_commit(req, reorient);
+    ESP_LOGI(TAG, "preset loaded: %s", name);
+    return reply_and_commit(req, false);
 }
 
 static esp_err_t preset_delete_handler(httpd_req_t *req)

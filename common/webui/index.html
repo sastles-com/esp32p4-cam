@@ -63,7 +63,7 @@
    <select id="preset"></select>
    <div class="pbtns"><button id="psave" title="今の設定を、選んでいるプリセットに上書きする">上書き保存</button>
     <button id="psaveas">名前を付けて保存</button><button id="pren">名前変更</button><button id="pdel">削除</button></div>
-   <div class="hint">露出・ゲイン・ピント・WB・向き・撮影の画質と照明を保存します。プレビューのサイズと画質は含みません。</div>
+   <div class="hint">露出・ゲイン・ピント・WB・撮影の画質と照明を保存します。向きとプレビューのサイズ・画質は含みません。</div>
   </div>
   <div id="lt">
    <div class="row"><h3>照明</h3>
@@ -335,7 +335,7 @@ $('reset').onclick=async()=>{
   }
 };
 // ---- プリセット (ボードに保存。/presets) ----
-// 選ぶとその設定を読み込む。向きが違うプリセットはボードの再起動で反映する。
+// 選ぶとその設定を読み込む。プリセットは向きを持たないので、読み込みでボードは再起動しない。
 let presets=[], presetBusy=false;
 function renderPresets(){
   const sel=$('preset'), act=st&&st.preset;
@@ -370,14 +370,7 @@ $('preset').onchange=async()=>{
   const sel=$('preset'), name=sel.value; sel.blur();
   if(!name){ renderPresets(); return }        // 「なし」は選ぶだけでは何も変えない
   if(st&&st.preset_modified&&!confirm(`「${st.preset}」の変更は保存されていません。「${name}」を読み込みますか?`)){renderPresets();return}
-  const p=presets.find(p=>p.name===name);
-  const reorient=p&&st&&(('hflip' in p&&p.hflip!==st.hflip)||('vflip' in p&&p.vflip!==st.vflip));
-  if(reorient&&!confirm(`「${name}」は向きが違うため、ボードを再起動して反映します（数秒かかります）。読み込みますか?`)){renderPresets();return}
-  if(!reorient){ await presetOp(()=>api('POST','/presets/load',{name}),`「${name}」を読み込みました`); return }
-  try{ await api('POST','/presets/load',{name}) }catch(e){ cmsg('プリセット: '+e.message,'bad'); renderPresets(); return }
-  flipping=true; clearTimeout(pollTimer); $('view').removeAttribute('src');
-  $('ctl').classList.add('off'); cmsg(`「${name}」の向きにするため、ボードを再起動しています…`,'ok');
-  await waitBoard(); flipping=false; startPreview(); await loadCaps(); loadPresets();
+  await presetOp(()=>api('POST','/presets/load',{name}),`「${name}」を読み込みました`);
 };
 $('psave').onclick=()=>{
   $('psave').blur(); const name=st&&st.preset; if(!name)return;
