@@ -714,7 +714,7 @@ async function runRecipe(){
   const started=new Date();
   run={manifest:{recipe:rec.name,base_preset:rec.base_preset,executed_at:isoLocal(started),shots:[]},shots:[]};
   renderRun(); cmsg('');
-  let ok=0, ng=0, before=null, io0=null, lastErr='';
+  let ok=0, ng=0, before=null, io0=null, lastErr='', startErr='';
   try{
     prog('実行前の設定を記録しています…');
     before=await api('GET','/ctrl');
@@ -753,7 +753,7 @@ async function runRecipe(){
       }
       renderRun();
     }
-  }catch(e){ lastErr=e.message; prog('実行を始められません: '+e.message,'bad') }
+  }catch(e){ startErr=e.message }   // 土台の読み込みなど、ステップの外で失敗した
   // 照明とカメラの設定を実行前に戻す (中断・失敗でも)
   let restoreErr='';
   if(before){
@@ -767,9 +767,13 @@ async function runRecipe(){
   running=false; abortRun=false; busy=false; $('shot').disabled=false;
   ['ctl','pre','lt'].forEach(id=>$(id).classList.remove('off')); if(!caps)$('ctl').classList.add('off');
   renderRecipeState(); renderRun(); startPreview(); poll(); pollLight();
-  if(before){
+  const back=restoreErr?` — 設定を戻せませんでした (${restoreErr})`:' — 照明とカメラの設定は実行前に戻しました';
+  if(startErr){
+    prog(`実行できませんでした: ${startErr}`+(before?back:''),'bad');
+    $('msg').className='bad'; $('msg').textContent=`レシピ「${rec.name}」を実行できませんでした: ${startErr}`;
+  }else{
     const sum=`${stopped?'中断しました':'完了'}: 成功 ${ok} 枚、失敗 ${ng} 枚 (全 ${todo.length} ステップ)`+
-      (ng?` — 最後の失敗: ${lastErr}`:'')+(restoreErr?` — 設定を戻せませんでした (${restoreErr})`:' — 照明とカメラの設定は実行前に戻しました');
+      (ng?` — 最後の失敗: ${lastErr}`:'')+back;
     prog(sum,ng||restoreErr?'bad':'ok');
     $('msg').className=ng?'bad':'ok'; $('msg').textContent=`レシピ「${rec.name}」 ${stopped?'中断':'完了'}: 成功 ${ok} / 失敗 ${ng} (「写真」タブ)`;
   }

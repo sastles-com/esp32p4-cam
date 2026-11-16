@@ -345,9 +345,10 @@ AF を 1 回走らせる（ピントを auto にする）。`202 {"af_state":"ru
   "name": "露出ブラケット5段",
   "base_preset": "標準",
   "steps": [
-    {"enabled": true, "overrides": {"exposure_mode": "manual", "exposure_us": 4000},
+    {"enabled": true, "overrides": {"exposure_mode": "manual", "gain_mode": "manual", "exposure_us": 4000},
      "light_out": 3, "q": 95, "settle_ms": 800},
-    {"enabled": true, "overrides": {"exposure_us": 8000}, "light_out": 3, "q": 95, "settle_ms": 800}
+    {"enabled": true, "overrides": {"exposure_mode": "manual", "gain_mode": "manual", "exposure_us": 8000},
+     "light_out": 3, "q": 95, "settle_ms": 800}
   ]
 }
 ```
@@ -364,10 +365,17 @@ AF を 1 回走らせる（ピントを auto にする）。`202 {"af_state":"ru
 | `steps[].settle_ms` | 0〜60000（省略時 800） | 条件を適用してから撮るまでの待ち時間（ms） |
 
 継承: 各ステップの実効値は「土台の値に、そのステップの `overrides` を重ねたもの」。前のステップの
-`overrides` は次のステップに持ち越さない。範囲外の数値はボードが `/ctrl` と同じく丸める。
+`overrides` は次のステップに持ち越さない（モードも含む）。範囲外の数値はボードが `/ctrl` と同じく丸める。
+
+**値はモードが `manual` のときだけ効く。** 土台が `auto` の項目に値だけ書いても（例 `{"exposure_us": 8000}`）、
+ボードは値を覚えるだけで使わない。値を書くステップには、そのモードも `"manual"` で書くこと。露出は
+`exposure_mode` だけ `manual` だとゲインが自動で明るさを合わせる（シャッター優先）ので、明るさを変えたいときは
+`gain_mode` も `manual` にする。
 
 保存すると、省略したキーは既定値で埋めた形（上の表のすべてのキーがある形）で記録される。`GET /recipes` は
 その形を返すので、そのままエクスポートすればボードの保存内容と一致する。最大 20 個。
+保存先は 1 ファイル（`/cfg/recipes.json` = `{"version":1,"recipes":[…]}`）。ファイル全体は 240 kB まで読む
+（プリセット・設定ファイルの 24 kB とは別の上限）。
 
 エラー（400）: 名前の規則違反、`steps` が空・31 個以上、知らないキー、型や範囲の違反。
 メッセージで原因が分かる（例 `{"error":"light_out must be 0..255 or null"}`）。
@@ -472,7 +480,7 @@ curl -X POST "$B/presets/save" --data-urlencode "name=試験片A" -G   # 今の�
 curl -X POST "$B/presets/load" --data-urlencode "name=試験片A" -G   # 読み込む
 curl -X POST $B/shot                                                # その設定で撮る
 curl -X POST $B/recipes/save -H 'Content-Type: application/json' \
-  -d '{"name":"露出3段","base_preset":"試験片A","steps":[{"overrides":{"exposure_us":4000}},{"overrides":{"exposure_us":8000}},{"overrides":{"exposure_us":16000}}]}'
+  -d '{"name":"露出3段","base_preset":"試験片A","steps":[{"overrides":{"exposure_mode":"manual","gain_mode":"manual","exposure_us":4000}},{"overrides":{"exposure_mode":"manual","gain_mode":"manual","exposure_us":8000}},{"overrides":{"exposure_mode":"manual","gain_mode":"manual","exposure_us":16000}}]}'
 curl $B/recipes
 ```
 
