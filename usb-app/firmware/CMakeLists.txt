@@ -5,6 +5,10 @@ cmake_minimum_required(VERSION 3.16)
 set(SDKCONFIG_DEFAULTS
     "${CMAKE_CURRENT_LIST_DIR}/../../common/camcore/sdkconfig.camcore"
     "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
+# Chip v1.x instead of v3.x: -D P4_REV_LESS_V3=1 (with its own build dir and sdkconfig).
+if(P4_REV_LESS_V3)
+    list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.rev1")
+endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 

@@ -47,6 +47,8 @@
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
 #include "lwip/sockets.h"
+#include "esp_timer.h"
+#include <fcntl.h>
 
 #include "tunnel.h"
 
@@ -61,12 +63,18 @@ static const char *TAG = "tunnel";
 
 #define PORT            CONFIG_ESP_CONSOLE_UART_NUM
 #define RX_BUF          (8 * 1024)
+#define RX_FULL_THRESH  32              /* bytes in the RX FIFO before the ISR empties it */
 #define TX_BUF          (16 * 1024)
 #define CHANNELS        8
 #define MAX_IN          4096            /* largest payload accepted from the PC */
 #define MAX_OUT         2048            /* payload per DATA frame to the PC */
 #define HDR             6               /* magic, type, ch, len */
 #define TRAILER         4               /* CRC-32 */
+/* connect() to our own :80/:81 normally completes at once (lwIP answers the
+ * SYN itself). It only waits when the server's listen backlog is full, and
+ * a blocking connect then stalls every channel: no CLOSE gets answered, and
+ * the PC runs out of channel numbers. Give up after this and answer CLOSE. */
+#define CONNECT_MAX_MS  1500
 
 enum { T_HELLO = 1, T_OPEN = 2, T_DATA = 3, T_CLOSE = 4 };
 
@@ -115,14 +123,41 @@ static void ch_close(int ch, bool tell_pc)
     if (tell_pc) send_frame(T_CLOSE, ch, NULL, 0);
 }
 
+/* connect() with a time limit (CONNECT_MAX_MS); the socket is left blocking again. */
+static bool connect_bounded(int s, const struct sockaddr_in *a, int ch, uint16_t port)
+{
+    int fl = fcntl(s, F_GETFL, 0);
+    fcntl(s, F_SETFL, fl | O_NONBLOCK);
+    int64_t t0 = esp_timer_get_time();
+    int r = connect(s, (const struct sockaddr *)a, sizeof(*a));
+    if (r != 0 && errno == EINPROGRESS) {
+        fd_set wf;
+        FD_ZERO(&wf);
+        FD_SET(s, &wf);
+        struct timeval tv = { .tv_sec = CONNECT_MAX_MS / 1000, .tv_usec = (CONNECT_MAX_MS % 1000) * 1000 };
+        int err = 0;
+        socklen_t el = sizeof(err);
+        r = select(s + 1, NULL, &wf, NULL, &tv) == 1 &&
+            getsockopt(s, SOL_SOCKET, SO_ERROR, &err, &el) == 0 && err == 0 ? 0 : -1;
+        if (r != 0 && err) errno = err;
+    }
+    int ms = (int)((esp_timer_get_time() - t0) / 1000);
+    if (r != 0) {
+        ESP_LOGW(TAG, "ch %d: connect to :%u failed after %d ms, errno %d", ch, port, ms, errno);
+        return false;
+    }
+    if (ms > 100) ESP_LOGW(TAG, "ch %d: connect to :%u took %d ms", ch, port, ms);
+    fcntl(s, F_SETFL, fl);
+    return true;
+}
+
 static void ch_open(int ch, uint16_t port)
 {
     ch_close(ch, false);   /* a reused number replaces whatever was there */
     int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons(port) };
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (s < 0 || connect(s, (struct sockaddr *)&a, sizeof(a)) != 0) {
-        ESP_LOGW(TAG, "ch %d: connect to :%u failed, errno %d", ch, port, errno);
+    if (s < 0 || !connect_bounded(s, &a, ch, port)) {
         if (s >= 0) close(s);
         send_frame(T_CLOSE, ch, NULL, 0);
         return;
@@ -194,7 +229,14 @@ static void parse(void)
         if (s_in_len - i < HDR + len + TRAILER) break;      /* wait for the rest */
         uint32_t crc;
         memcpy(&crc, f + HDR + len, 4);
-        if (crc != crc32_update(0, f + 2, 4 + len)) { i++; continue; }
+        if (crc != crc32_update(0, f + 2, 4 + len)) {
+            /* Bytes lost or changed on the way in (a UART RX overrun shows up
+             * here). The PC's request on that channel then never arrives. */
+            ESP_LOGW(TAG, "dropped a frame from the PC: bad CRC (type %u, ch %u, len %u)",
+                     f[2], f[3], (unsigned)len);
+            i++;
+            continue;
+        }
         handle(f[2], f[3], f + HDR, len);
         i += HDR + len + TRAILER;
     }
@@ -262,6 +304,12 @@ esp_err_t tunnel_start(void)
         ESP_LOGE(TAG, "uart_driver_install: %s", esp_err_to_name(r));
         return r;
     }
+    /* Empty the 128-byte RX FIFO early. The driver's default threshold (120)
+     * leaves 8 bytes - 40 us at 2 Mbaud - for the interrupt to run, and a
+     * request with a body (more than ~120 bytes in one burst) then lost bytes
+     * about half the time: the frame failed its CRC and the request never
+     * arrived. At 32 the interrupt has ~480 us. */
+    uart_set_rx_full_threshold(PORT, RX_FULL_THRESH);
     uart_vfs_dev_use_driver(PORT);
 
     if (xTaskCreatePinnedToCore(tunnel_task, "tunnel", 4096, NULL, 6, NULL, tskNO_AFFINITY) != pdPASS) {

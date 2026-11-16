@@ -11,3 +11,5 @@ pc/.venv/
 pc/captures/
 __pycache__/
 .DS_Store
+!usb-app/firmware/sdkconfig.rev1
+.venv/

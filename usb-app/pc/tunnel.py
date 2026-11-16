@@ -38,6 +38,7 @@ MAX_FROM_BOARD = 4096  # anything longer is a false start
 # another (an old build, say) is refused rather than half-working: version 1
 # did not answer CLOSE, and channels never came free.
 PROTOCOL = "usb-app tunnel 2"
+RESYNC_S = 5.0        # at most one resync HELLO this often
 
 
 def frame(ftype: int, ch: int, payload: bytes = b"") -> bytes:
@@ -101,6 +102,7 @@ class Tunnel:
         self._free: asyncio.Queue[int] | None = None
         self._open: dict[int, Channel] = {}
         self._stop = False
+        self._last_resync = 0.0
 
     # ---- lifecycle ----------------------------------------------------------
 
@@ -123,7 +125,11 @@ class Tunnel:
     async def open(self, port: int, timeout: float = 10.0) -> Channel:
         if not self.connected:
             raise ConnectionError("board not connected")
-        ch = await asyncio.wait_for(self._free.get(), timeout)
+        try:
+            ch = await asyncio.wait_for(self._free.get(), timeout)
+        except asyncio.TimeoutError:
+            self._resync()
+            raise
         c = Channel(self, ch)
         self._open[ch] = c
         if self.debug:
@@ -134,6 +140,21 @@ class Tunnel:
             self._release(c)
             raise
         return c
+
+    def _resync(self) -> None:
+        """Every number is out and none came back: the board is not answering our
+        CLOSEs (or lost them). HELLO makes it close every channel and answer
+        HELLO, which frees every number here (_on_frame) - in-flight requests
+        fail once, and the link works again. At most every RESYNC_S."""
+        now = time.monotonic()
+        if now - self._last_resync < RESYNC_S:
+            return
+        self._last_resync = now
+        self.log(f"[tunnel] no channel came free in time ({len(self._open)} in use) - resyncing with HELLO")
+        try:
+            self._write(frame(T_HELLO, 0))
+        except ConnectionError:
+            pass
 
     def _release(self, c: Channel) -> None:
         if self._open.get(c.ch) is c:

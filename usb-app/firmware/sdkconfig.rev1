@@ -1,0 +1,4 @@
+# ESP32-P4 silicon v1.x (e.g. the board without the C6). Selected with
+#   idf -B build_v1 -D SDKCONFIG=sdkconfig.v1 -D P4_REV_LESS_V3=1 build
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
