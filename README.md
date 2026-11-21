@@ -18,7 +18,12 @@ Wi-Fi 経由で PC に画像を送る。撮影や設定は **MQTT** または **
 | `common/webui/` | ボード自身が配信する Web UI（1 ファイル、外部依存なし） | 実機で配信を確認 |
 | `wifi-app/` | アプリ 1: ボードが HTML を持ち、Wi-Fi（SSID 接続、将来は SoftAP も）で操作 | STA 版が動作。SoftAP は未着手 |
 | `usb-app/` | アプリ 2: USB 接続。PC の FastAPI が同じ画面を LAN に配信（[usb-app/README.md](usb-app/README.md)） | シリアル版が動作。USB HS（NCM）は未着手 |
+| `mock-server/` | ダミーサーバー。ボード無しで usb-app と同じ API・画面を返す（[docs/mock-environment.md](docs/mock-environment.md)） | 動作 |
 | `src/`, `pc/` | 最初の雛形（MQTT 前提）。`pc/camtool.py` は旧ツール | 使っていない |
+
+**ボードが無くても動作確認できる**: `mock-server/run.sh` を起動して <http://127.0.0.1:8080/> を開く。
+プリセット・レシピの入った状態で始まり、撮影・レシピの実行・PC への保存まで試せる。
+手順は [docs/mock-environment.md](docs/mock-environment.md)。
 
 ビルド: `camserver/`、`wifi-app/`、`usb-app/firmware` は **ESP-IDF の `idf.py`**（PlatformIO は使わない）。
 新しい基板（チップ rev v3.2、無線コプロセッサは ESP32-C5）は IDF 5.5.x と

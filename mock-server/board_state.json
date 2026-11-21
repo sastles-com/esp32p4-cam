@@ -1,0 +1,36 @@
+{
+ "source": "sample (実機に似せた見本。run.sh --capture http://127.0.0.1:8080 で実機の中身に置き換わる)",
+ "captured_at": "2026-11-20T00:00:00",
+ "camera": true,
+ "light_board": true,
+ "ctrl": {
+  "exposure_mode": "auto", "gain_mode": "auto", "focus_mode": "auto", "wb_mode": "auto",
+  "exposure_us": 20000, "gain_index": 0, "focus_pos": 512, "wb_red": 1704, "wb_blue": 2002,
+  "hflip": false, "vflip": false, "shutter_priority": "B", "shot_q": 95, "shot_light": true,
+  "preset": null, "preset_modified": false, "config": "loaded"
+ },
+ "presets": [
+  {"name": "標準", "exposure_mode": "auto", "gain_mode": "auto", "focus_mode": "auto", "wb_mode": "auto",
+   "shot_q": 95, "shot_light": true, "exposure_us": 20000, "gain_index": 0, "focus_pos": 512,
+   "wb_red": 1704, "wb_blue": 2002, "sp": "B"},
+  {"name": "試験片A", "exposure_mode": "manual", "gain_mode": "manual", "focus_mode": "manual", "wb_mode": "manual",
+   "shot_q": 95, "shot_light": true, "exposure_us": 240, "gain_index": 33, "focus_pos": 704,
+   "wb_red": 1820, "wb_blue": 1918, "sp": "B"},
+  {"name": "シャッター優先 4ms", "exposure_mode": "manual", "gain_mode": "auto", "focus_mode": "auto", "wb_mode": "auto",
+   "shot_q": 95, "shot_light": true, "exposure_us": 4000, "gain_index": 0, "focus_pos": 512,
+   "wb_red": 1704, "wb_blue": 2002, "sp": "A"}
+ ],
+ "recipes": [
+  {"name": "露出ブラケット5段", "base_preset": "標準", "steps": [
+   {"enabled": true, "overrides": {"exposure_mode": "manual", "gain_mode": "manual", "exposure_us": 2000}, "light_out": null, "q": 90, "settle_ms": 800},
+   {"enabled": true, "overrides": {"exposure_mode": "manual", "gain_mode": "manual", "exposure_us": 4000}, "light_out": null, "q": 90, "settle_ms": 800},
+   {"enabled": true, "overrides": {"exposure_mode": "manual", "gain_mode": "manual", "exposure_us": 8000}, "light_out": null, "q": 90, "settle_ms": 800},
+   {"enabled": true, "overrides": {"exposure_mode": "manual", "gain_mode": "manual", "exposure_us": 16000}, "light_out": null, "q": 90, "settle_ms": 800},
+   {"enabled": true, "overrides": {"exposure_mode": "manual", "gain_mode": "manual", "exposure_us": 32000}, "light_out": null, "q": 90, "settle_ms": 800}
+  ]},
+  {"name": "照明あり・なし", "base_preset": "試験片A", "steps": [
+   {"enabled": true, "overrides": {}, "light_out": 3, "q": 95, "settle_ms": 800},
+   {"enabled": true, "overrides": {}, "light_out": 0, "q": 95, "settle_ms": 800}
+  ]}
+ ]
+}
