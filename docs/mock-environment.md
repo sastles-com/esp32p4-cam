@@ -17,6 +17,11 @@ git checkout claude/recipe-20261116      # main に入るまではこのブラ�
 
 ESP-IDF、USB ケーブル、ボードはいらない。
 
+**zip（`camera-mock-<日付>.zip`）で受け取った場合**は git もリポジトリもいらない。解凍したフォルダで
+`./run.sh`（Windows は `run.bat` をダブルクリック）。以下の `mock-server/` は解凍したフォルダに読み替える
+（例: `mock-server/run.sh --empty` → `./run.sh --empty`、写真は解凍したフォルダの `captures/` にできる）。
+zip は `mock-server/package.sh` で作る（`mock-server/dist/` にできる）。
+
 ## 2. 起動する
 
 ```sh
