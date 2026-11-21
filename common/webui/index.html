@@ -57,15 +57,18 @@
  .tblwrap{overflow-x:auto;margin-top:8px;border:1px solid var(--line);border-radius:8px}
  table.steps{border-collapse:collapse;font-size:12px;width:100%}
  table.steps caption{caption-side:top;text-align:left;padding:6px 8px;color:var(--mut);font-size:12px}
- table.steps th,table.steps td{padding:3px 4px;border-top:1px solid var(--line);text-align:center;white-space:nowrap}
+ table.steps th,table.steps td{padding:3px 3px;border-top:1px solid var(--line);text-align:center;white-space:nowrap}
  table.steps th{color:var(--mut);font-weight:600;background:#8881}
- table.steps input[type=number]{width:72px;padding:3px 4px;font-size:12px}
- table.steps input.s{width:52px}
+ table.steps input[type=number]{width:60px;padding:3px 4px;font-size:12px}
+ table.steps input.s{width:46px}
+ table.steps input[type=number]{appearance:textfield;-moz-appearance:textfield}
+ table.steps input::-webkit-inner-spin-button,table.steps input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
  table.steps input[type=checkbox]{width:auto;margin:0}
  table.steps tr.dis td:not(:first-child):not(:nth-child(2)){opacity:.45}
  .lo{display:inline-flex;gap:1px;align-items:center}
  .lo span{display:inline-flex;flex-direction:column;align-items:center;font-size:9px;color:var(--mut)}
  .ops button{padding:1px 5px;border:1px solid #8886;border-radius:5px;background:transparent;color:var(--fg);font-size:11px;cursor:pointer}
+ .ops select{width:40px;padding:1px 0;font-size:11px;margin-left:2px}
  .runbar{display:flex;gap:8px;margin-top:12px}
  .runbar button{flex:1;padding:10px;border-radius:8px;font:inherit;font-weight:600;cursor:pointer}
  #rrun{border:0;background:var(--ok);color:#fff}#rrun:disabled{opacity:.5;cursor:default}
@@ -175,7 +178,7 @@
    <div class="tblwrap"><table class="steps" id="steps"></table></div>
    <div class="pbtns"><button id="radd">行を追加</button></div>
    <div class="hint">値を入れた項目はその行で Manual になります。シャッターかゲインを入れると露出とゲインの両方が Manual になり、空欄の方はその時点の値で固定されます (明るさが自動で戻らないように)。前の行の指定は次の行に持ち越しません。
-    照明の「指定」を外した行は照明を操作しません。</div>
+    照明の「指定」を外した行は照明を操作しません。各行の右端の「P」でプリセットを選ぶと、そのプリセットのシャッター・ゲイン・ピント・WB の値をその行に入れます (Auto の項目は空欄。照明・画質・待機は変えません)。</div>
    </div>
    <div class="runbar"><button id="rrun">▶ 実行</button><button id="rstop" disabled>■ 中断</button></div>
    <div class="hint" id="rprog"></div>
@@ -187,7 +190,7 @@
   <div class="tab" id="tab-photo">
    <div id="runsec" style="display:none">
     <div class="row"><h3>レシピの結果</h3></div>
-    <div class="hint" id="runinfo"></div>
+    <div class="hint" id="runinfo" style="white-space:pre-line"></div>
     <div class="pbtns"><button id="rdlall">写真を全部保存</button><button id="rmani">マニフェスト (JSON)</button></div>
     <div class="rgal" id="rgal"></div>
    </div>
@@ -467,6 +470,7 @@ function renderPresets(){
   sel.value=act&&presets.some(p=>p.name===act)?act:'';
   renderPresetState(st);
   renderBaseOptions();
+  if(editing&&!$('steps').contains(document.activeElement))renderSteps();   // 行のプリセット欄も作り直す
 }
 function renderPresetState(s){
   if(!s||!('preset' in s))return;
@@ -552,6 +556,21 @@ function rowToStep(r){
   if(r.wbr!==''||r.wbb!==''){ ov.wb_mode='manual'; if(r.wbr!=='')ov.wb_red=n(r.wbr); if(r.wbb!=='')ov.wb_blue=n(r.wbb) }
   return {enabled:r.enabled,overrides:ov,light_out:r.light,q:r.q===''?Q_DEF:Math.round(+r.q),settle_ms:r.settle===''?SETTLE_DEF:Math.round(+r.settle)};
 }
+// プリセットの値を行のセルに写す (名前はレシピに残らない)。Manual の項目だけ写せる:
+// 表は「値を入れたら Manual」なので、Auto の項目は空欄 (土台を継承) にする。返り値は画面に出す注記
+function presetToRow(r,p){
+  const notes=[], put=(f,k)=>{ if(k in p)r[f]=String(p[k]) }, clr=(...fs)=>fs.forEach(f=>r[f]='');
+  const drop=(...ks)=>ks.forEach(k=>delete r.extra[k]);
+  if('exposure_mode' in p){ drop('exposure_mode','gain_mode','exposure_us','gain_index');
+    if(p.exposure_mode==='manual'){ put('exp','exposure_us'); put('gain','gain_index');
+      if(p.gain_mode!=='manual')notes.push('ゲインはシャッター優先 (Auto) でしたが、プリセットの値で固定します') }
+    else{ clr('exp','gain'); notes.push('露出・ゲインは Auto なので空欄 (土台を継承) にしました') } }
+  if('focus_mode' in p){ drop('focus_mode','focus_pos');
+    if(p.focus_mode==='manual')put('foc','focus_pos'); else{ clr('foc'); notes.push('ピントは Auto なので空欄にしました') } }
+  if('wb_mode' in p){ drop('wb_mode','wb_red','wb_blue');
+    if(p.wb_mode==='manual'){ put('wbr','wb_red'); put('wbb','wb_blue') } else{ clr('wbr','wbb'); notes.push('WB は Auto なので空欄にしました') } }
+  return notes;
+}
 function editorRecipe(){
   return {name:$('rname').value.trim(),base_preset:$('rbase').value||null,steps:editing.rows.map(rowToStep)};
 }
@@ -583,6 +602,7 @@ function renderRecipeState(){
   $('redit').classList.toggle('off',running);
 }
 function rng(c,lo,hi){return c?`min="${c[lo]}" max="${c[hi]}"`:''}
+const presetPick=i=>presets.length?`<select data-i="${i}" data-op="pre" title="プリセットの値 (シャッター・ゲイン・ピント・WB) をこの行に入れる"><option value="">P</option><option value="" disabled>プリセットの値を入れる:</option>${presets.map(p=>`<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('')}</select>`:'';
 function renderSteps(){
   if(!editing)return;
   const ce=caps&&caps.exposure_us, cg=caps&&caps.gain, cf=caps&&caps.focus, cw=caps&&caps.wb;
@@ -599,18 +619,26 @@ function renderSteps(){
 <td>${num(i,'foc',rng(cf,'min','max'),'s')}</td><td>${num(i,'wbr',rng(cw,'min','max'),'s')}</td><td>${num(i,'wbb',rng(cw,'min','max'),'s')}</td>
 <td><span class="lo"><label class="chk" style="font-size:11px;margin-right:4px"><input type="checkbox" data-i="${i}" data-f="lighton" ${r.light!=null?'checked':''}>指定</label>${lo}</span></td>
 <td>${num(i,'q','min="1" max="100"','s',Q_DEF)}</td><td>${num(i,'settle','min="0" max="60000" step="100"','s',SETTLE_DEF)}</td>
-<td class="ops"><button data-i="${i}" data-op="up" title="上へ">↑</button><button data-i="${i}" data-op="down" title="下へ">↓</button><button data-i="${i}" data-op="dup" title="複製">⧉</button><button data-i="${i}" data-op="del" title="削除">✕</button></td></tr>`;
+<td class="ops"><button data-i="${i}" data-op="up" title="上へ">↑</button><button data-i="${i}" data-op="down" title="下へ">↓</button><button data-i="${i}" data-op="dup" title="複製">⧉</button><button data-i="${i}" data-op="del" title="削除">✕</button>${presetPick(i)}</td></tr>`;
   });
   $('steps').innerHTML=h;
   renderRecipeState();
 }
 $('steps').addEventListener('input',e=>{
-  const t=e.target, i=+t.dataset.i; if(!editing||isNaN(i))return; const r=editing.rows[i];
+  const t=e.target, i=+t.dataset.i; if(!editing||isNaN(i)||t.tagName==='SELECT')return; const r=editing.rows[i];
   if(t.dataset.bit!==undefined){ const b=+t.dataset.bit; r.light=(r.light||0)&~(1<<b)|(t.checked?1<<b:0) }
   else if(t.dataset.f==='enabled'){ r.enabled=t.checked; t.closest('tr').className=r.enabled?'':'dis' }
   else if(t.dataset.f==='lighton'){ r.light=t.checked?0:null; renderSteps() }
   else if(t.dataset.f){ r[t.dataset.f]=t.value.trim() }
   markDirty();
+});
+$('steps').addEventListener('change',e=>{
+  const t=e.target; if(!editing||t.dataset.op!=='pre'||!t.value)return;
+  const i=+t.dataset.i, p=presets.find(x=>x.name===t.value); t.blur();
+  if(!p){ renderSteps(); return }
+  const notes=presetToRow(editing.rows[i],p);
+  markDirty(); renderSteps();
+  cmsg(`${String(i+1).padStart(2,'0')} 行目にプリセット「${p.name}」の値を入れました`+(notes.length?'。'+notes.join('。'):''),'ok');
 });
 $('steps').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b||!editing)return; b.blur();
@@ -699,7 +727,24 @@ function describe(step){
   p.push(`q${step.q}`,`${step.settle_ms} ms`);
   return p.join(' / ');
 }
-let run=null;   // 直近 1 回の実行結果: {manifest, shots:[{name,url,...}]}
+let run=null;   // 直近 1 回の実行結果: {manifest, shots:[{name,url,...}], save}
+// usb-app の PC サーバーは、レシピの結果を PC のフォルダに保存できる (/pc/info, /pc/save)。
+// ボード直結 (wifi-app) には無いので、そのときはこれまでどおりブラウザでダウンロードする
+let pcSave=null;
+async function checkPcSave(){
+  try{ const r=await fetch('/pc/info',{cache:'no-store'}); if(r.ok){ const j=await r.json(); pcSave=j.save_dir?j:null } }catch(e){}
+}
+async function pcPut(folder,name,data){
+  const r=await fetch(`/pc/save?folder=${encodeURIComponent(folder)}&name=${encodeURIComponent(name)}`,{method:'POST',body:data});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error||`${r.status} ${r.statusText}`);
+  return j.path;
+}
+// 保存の失敗では撮影を止めない。最初の失敗を画面に出す
+async function runSave(name,data){
+  const v=run.save; if(!v)return;
+  try{ await pcPut(v.folder,name,data); v.n++ }catch(e){ if(!v.err)v.err=`${name}: ${e.message}` }
+}
 function prog(t,cls){ $('rprog').className='hint'+(cls?' '+cls:''); $('rprog').textContent=t }
 async function runRecipe(){
   const rec=editorRecipe();
@@ -712,8 +757,11 @@ async function runRecipe(){
   $('view').removeAttribute('src');   // プレビューを止めて、静止画に帯域を譲る
   if(run)run.shots.forEach(s=>s.url&&URL.revokeObjectURL(s.url));
   const started=new Date();
-  run={manifest:{recipe:rec.name,base_preset:rec.base_preset,executed_at:isoLocal(started),shots:[]},shots:[]};
+  run={manifest:{recipe:rec.name,base_preset:rec.base_preset,executed_at:isoLocal(started),shots:[]},shots:[],
+    save:pcSave?{dir:pcSave.save_dir,folder:`${ymdhms(started)}_${safeName(rec.name)}`,n:0,err:''}:null};
+  const runBase=`${safeName(rec.name)}_${ymdhms(started)}`;
   renderRun(); cmsg('');
+  await runSave(`${runBase}_recipe.json`,json(rec));   // 実際に実行した中身 (保存前の編集を含む)
   let ok=0, ng=0, before=null, io0=null, lastErr='', startErr='';
   try{
     prog('実行前の設定を記録しています…');
@@ -746,6 +794,7 @@ async function runRecipe(){
         run.shots.push({name:file,url:URL.createObjectURL(blob),step:no,applied,light_out:lightOut,q:s.q,size:blob.size});
         run.manifest.shots.push({file,step:no,ok:true,taken_at:isoLocal(taken),applied,light_out:lightOut,q:s.q});
         ok++;
+        await runSave(file,blob);
       }catch(e){
         ng++; lastErr=e.message;
         run.shots.push({name:null,step:no,error:e.message});
@@ -763,18 +812,20 @@ async function runRecipe(){
       else await api('POST','/ctrl',pick9(before));
     }catch(e){ restoreErr+=(restoreErr?' / ':'')+'カメラ: '+e.message }
   }
+  if(run.save)await runSave(`${runBase}_manifest.json`,json(run.manifest));
   const stopped=abortRun;
   running=false; abortRun=false; busy=false; $('shot').disabled=false;
   ['ctl','pre','lt'].forEach(id=>$(id).classList.remove('off')); if(!caps)$('ctl').classList.add('off');
   renderRecipeState(); renderRun(); startPreview(); poll(); pollLight();
-  const back=restoreErr?` — 設定を戻せませんでした (${restoreErr})`:' — 照明とカメラの設定は実行前に戻しました';
+  const back=(restoreErr?` — 設定を戻せませんでした (${restoreErr})`:' — 照明とカメラの設定は実行前に戻しました')+
+    (run.save?(run.save.err?` — PC への保存に失敗: ${run.save.err}`:` — PC に保存: ${run.save.dir}/${run.save.folder}`):'');
   if(startErr){
     prog(`実行できませんでした: ${startErr}`+(before?back:''),'bad');
     $('msg').className='bad'; $('msg').textContent=`レシピ「${rec.name}」を実行できませんでした: ${startErr}`;
   }else{
     const sum=`${stopped?'中断しました':'完了'}: 成功 ${ok} 枚、失敗 ${ng} 枚 (全 ${todo.length} ステップ)`+
       (ng?` — 最後の失敗: ${lastErr}`:'')+back;
-    prog(sum,ng||restoreErr?'bad':'ok');
+    prog(sum,ng||restoreErr||(run.save&&run.save.err)?'bad':'ok');
     $('msg').className=ng?'bad':'ok'; $('msg').textContent=`レシピ「${rec.name}」 ${stopped?'中断':'完了'}: 成功 ${ok} / 失敗 ${ng} (「写真」タブ)`;
   }
 }
@@ -788,7 +839,9 @@ function fmtApplied(a){
 function renderRun(){
   $('runsec').style.display=run?'':'none'; if(!run)return;
   const m=run.manifest, okN=run.shots.filter(s=>s.name).length;
-  $('runinfo').textContent=`「${m.recipe}」 ${m.executed_at}  土台: ${m.base_preset??'(実行開始時の設定)'}  成功 ${okN} / ${run.shots.length}${running?' (実行中)':''}`;
+  const sv=run.save;
+  $('runinfo').textContent=`「${m.recipe}」 ${m.executed_at}  土台: ${m.base_preset??'(実行開始時の設定)'}  成功 ${okN} / ${run.shots.length}${running?' (実行中)':''}`+
+    (sv?`\n保存先 (PC): ${sv.dir}/${sv.folder}  ${sv.n} ファイル${sv.err?'  — 保存に失敗: '+sv.err:''}`:'\nPC には保存していません (「写真を全部保存」でダウンロードしてください)');
   $('rgal').innerHTML=run.shots.map(s=>s.name
     ?`<figure><a href="${s.url}" download="${esc(s.name)}" title="${esc(s.name)} (クリックで保存)"><img src="${s.url}"></a>
 <figcaption><b>${pad(s.step)}</b> ${esc(fmtApplied(s.applied))} · 照明 ${s.light_out==null?'-':'0x'+s.light_out.toString(16).padStart(2,'0')} · q${s.q}<br>${esc(s.name)}</figcaption></figure>`
@@ -839,5 +892,5 @@ async function pollShots(){
   }catch(e){}   // 古いファームやボードの再起動中は黙って次を待つ
   setTimeout(pollShots,1500);
 }
-startPreview(); loadCaps(); loadPresets(); loadRecipes(); pollLight(); pollShots();
+startPreview(); loadCaps(); loadPresets(); loadRecipes(); pollLight(); pollShots(); checkPcSave();
 </script></html>

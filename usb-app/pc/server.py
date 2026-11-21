@@ -5,8 +5,11 @@
 Open the printed URL from this PC or any other on the network. The page is the
 one the board serves itself under wifi-app (common/webui/index.html), and every
 API path (/ctrl, /af, /io, /snapshot.jpg, …) is passed through to the board
-unchanged - this server adds no API of its own. Photos download in the
-browser, as with wifi-app; nothing is stored here.
+unchanged.
+
+Its own API is under /pc/: the page saves a recipe run's photos and manifest
+into --save-dir (default usb-app/pc/captures/, one folder per run). Under
+wifi-app there is no such server, and the page falls back to downloads.
 
 What it does add, because a serial link is slow (~200 kB/s at 2 Mbaud):
   - /stream.mjpg takes ONE stream from the board and hands every frame to all
@@ -43,6 +46,12 @@ API_SLOTS = 3
 # Big transfers: the preview pauses while one of these is on the link.
 BIG_PATHS = {"snapshot.jpg", "snapshot.raw", "shot.jpg", "bench"}
 PASS_HEADERS = ("content-type", "content-length", "cache-control", "x-frame-size", "x-frame-format", "x-shot-id")
+
+# /pc/save: a folder and a file name, one path component each (no separators,
+# nothing Windows refuses), only the kinds of file the page writes.
+SAVE_PART = re.compile(r'[^\\/:*?"<>|\x00-\x1f]{1,120}')
+SAVE_EXT = (".jpg", ".json")
+SAVE_MAX = 32 * 1024 * 1024
 
 
 def log(msg: str) -> None:
@@ -142,7 +151,18 @@ class MjpegHub:
                 self._restart()
 
 
-def build_app(serial_port: str, baud: int, debug: bool = False) -> FastAPI:
+def save_part_ok(part: str) -> bool:
+    return bool(SAVE_PART.fullmatch(part)) and part.strip(" .") != "" and part == part.strip()
+
+
+def write_file(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".part")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+
+
+def build_app(serial_port: str, baud: int, debug: bool = False, save_dir: Path | None = None) -> FastAPI:
     tunnel = Tunnel(serial_port, baud, log=log, debug=debug)
     hub = MjpegHub(tunnel)
     slots = asyncio.Semaphore(API_SLOTS)
@@ -168,6 +188,32 @@ def build_app(serial_port: str, baud: int, debug: bool = False) -> FastAPI:
         return StreamingResponse(hub.watch(max(1, min(q, 100)), n),
                                  media_type="multipart/x-mixed-replace; boundary=frame",
                                  headers={"Cache-Control": "no-store"})
+
+    # ---- this server's own API (before the catch-all relay below) ----
+
+    @app.get("/pc/info")
+    def pc_info():
+        return {"server": "usb-app", "save_dir": str(save_dir) if save_dir else None}
+
+    @app.post("/pc/save")
+    async def pc_save(req: Request, folder: str, name: str):
+        """The body, as <save_dir>/<folder>/<name>. An existing file is replaced."""
+        if save_dir is None:
+            return JSONResponse({"error": "saving is off (server started with --no-save)"}, status_code=404)
+        if not (save_part_ok(folder) and save_part_ok(name)) or not name.lower().endswith(SAVE_EXT):
+            return JSONResponse({"error": "bad folder or file name"}, status_code=400)
+        if int(req.headers.get("content-length") or 0) > SAVE_MAX:
+            return JSONResponse({"error": "too large"}, status_code=413)
+        data = await req.body()
+        if not data or len(data) > SAVE_MAX:
+            return JSONResponse({"error": "empty or too large"}, status_code=400 if not data else 413)
+        path = save_dir / folder / name
+        try:
+            await asyncio.to_thread(write_file, path, data)
+        except OSError as e:
+            log(f"[save] {path}: {e}")
+            return JSONResponse({"error": f"cannot write: {e.strerror or e}"}, status_code=500)
+        return {"path": str(path), "size": len(data)}
 
     @app.api_route("/{path:path}", methods=["GET", "POST"])
     async def board(path: str, req: Request):
@@ -233,7 +279,11 @@ def main() -> None:
     ap.add_argument("--host", default="0.0.0.0", help="listen address (default: every interface)")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--debug", action="store_true", help="log every tunnel channel")
+    ap.add_argument("--save-dir", type=Path, default=HERE / "captures",
+                    help="where recipe runs are saved, one folder per run (default: captures/ next to this file)")
+    ap.add_argument("--no-save", action="store_true", help="do not save anything here (the page downloads instead)")
     a = ap.parse_args()
+    save_dir = None if a.no_save else a.save_dir.expanduser().resolve()
 
     port = a.serial or find_serial()
     if not port:
@@ -242,13 +292,14 @@ def main() -> None:
         sys.exit(f"web UI not found at {WEBUI}")
 
     log(f"board on {port} at {a.baud} baud")
+    log(f"recipe runs are saved in {save_dir}" if save_dir else "saving is off (--no-save)")
     if a.host in ("0.0.0.0", ""):
         for ip in lan_addresses() or ["<this PC's IP>"]:
             log(f"  http://{ip}:{a.port}/")
     log(f"  http://127.0.0.1:{a.port}/")
     # An open preview is a response that never ends; without a limit, Ctrl+C
     # would wait for every viewer to leave while the serial port stays held.
-    uvicorn.run(build_app(port, a.baud, a.debug), host=a.host, port=a.port, log_level="warning",
+    uvicorn.run(build_app(port, a.baud, a.debug, save_dir), host=a.host, port=a.port, log_level="warning",
                 timeout_graceful_shutdown=2)
 
 

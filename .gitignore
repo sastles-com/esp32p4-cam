@@ -13,3 +13,5 @@ __pycache__/
 .DS_Store
 !usb-app/firmware/sdkconfig.rev1
 .venv/
+usb-app/pc/captures/
+mock-server/captures/
