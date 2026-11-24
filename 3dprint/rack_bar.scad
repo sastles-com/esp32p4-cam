@@ -4,6 +4,7 @@
 /* [出力] */
 part = "A";              // "A" = 丸穴, "B" = スロット, "pair" = 噛み合わせ確認
 print_on_side = true;    // true: 歯形断面をXY平面に置く（横置き印刷）
+snap_groove = true;      // B の両端の歯なし区間の細い側面に，bar_socket のスナップ爪が掛かる溝を入れる（A には入れない）
 
 include <rack_params.scad>
 
@@ -11,8 +12,10 @@ include <rack_params.scad>
 hole_d = 5.5;            // M5 通し穴
 cb_d = 10;               // 座ぐり径
 cb_depth = 2;            // 座ぐり深さ（背面側）
-a_hole_x = 100;          // A の丸穴位置（端からの距離）
+a_hole_x = 100;          // A の丸穴位置（端からの距離）．L=100 の rack_bar_A_L100.stl は 75（以前は 65）
 b_slot_margin = 20;      // B のスロット両端の残し長さ
+a_cb_hex = true;         // A の座ぐりを六角にする（M5 の六角ボルト頭・ナットの回り止め）
+hex_af = 8.3;            // 六角の対辺（M5 の六角頭・ナットは 8.0．すきま 0.3）
 
 $fn = 64;
 
@@ -52,7 +55,18 @@ module through_slot(x0, x1) {
 module bar(kind) {
     difference() {
         linear_extrude(W) profile_2d();
-        if (kind == "A")
+        // スナップ溝: 細い側面（Z=0 と Z=W）に，厚さ方向（Y）へ横断．両端とも
+        if (snap_groove && kind == "B")
+            for (x = [snap_groove_x0, L - snap_groove_x1], z = [-1, W - snap_groove_d])
+                translate([x, -1, z])
+                    cube([snap_groove_x1 - snap_groove_x0, base_t + tooth_h + 2, snap_groove_d + 1]);
+        if (kind == "A" && a_cb_hex) {
+            // 通し穴 + 六角の座ぐり（横置き印刷で頂点が上になる向き．上面がブリッジにならない）
+            translate([a_hole_x, -1, W / 2]) rotate([-90, 0, 0]) {
+                cylinder(d = hole_d, h = base_t + tooth_h + 2);
+                rotate([0, 0, 30]) cylinder(d = hex_af / cos(30), h = cb_depth + 1, $fn = 6);
+            }
+        } else if (kind == "A")
             through_slot(a_hole_x, a_hole_x);
         else
             through_slot(b_slot_margin + hole_d / 2, L - b_slot_margin - hole_d / 2);
