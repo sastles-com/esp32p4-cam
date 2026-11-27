@@ -1,4 +1,5 @@
-# Python 3.10 以上。動作確認: Python 3.13 + 下の版（2026-11-12）
+# Python 3.10+. Tested with Python 3.13 and these versions (2026-11-12).
+# Keep this file ASCII: older pip on Windows reads it in the locale code page (cp932).
 fastapi==0.162.5
 uvicorn==0.54.0
 pillow==13.0.0
