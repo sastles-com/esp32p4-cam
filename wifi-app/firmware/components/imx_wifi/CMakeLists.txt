@@ -2,7 +2,7 @@
 idf_component_register(
     SRCS "imx_wifi.c"
     INCLUDE_DIRS "include"
-    REQUIRES esp_wifi esp_netif esp_event nvs_flash
+    REQUIRES esp_wifi esp_netif esp_event nvs_flash esp_hw_support
 )
 
 # wifi_credentials.h is optional and pulled in behind __has_include, so it

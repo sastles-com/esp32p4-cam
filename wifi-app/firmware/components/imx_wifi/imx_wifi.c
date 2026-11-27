@@ -10,6 +10,7 @@
 #include "imx_wifi.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "nvs_flash.h"
@@ -35,6 +36,20 @@
 #ifndef WIFI_STA_PASSWORD
 #define WIFI_STA_PASSWORD ""
 #endif
+/* Access point mode: defining WIFI_AP_SSID makes the board its own network
+ * (no router; phones join it, e.g. from the NFC tag in docs/nfc-wifi-tag.md).
+ * The STA settings are then ignored. The board is 192.168.4.1 and hands out
+ * addresses by DHCP. 2.4 GHz only (the C6). */
+#ifndef WIFI_AP_SSID
+#define WIFI_AP_SSID ""
+#endif
+#ifndef WIFI_AP_PASSWORD
+#define WIFI_AP_PASSWORD ""
+#endif
+#ifndef WIFI_AP_CHANNEL
+#define WIFI_AP_CHANNEL 6
+#endif
+#define AP_MAX_CONN 4
 
 static const char *TAG = "imx_wifi";
 
@@ -71,8 +86,23 @@ static const char *reason_hint(uint8_t reason)
     }
 }
 
+static bool ap_mode(void)
+{
+    return WIFI_AP_SSID[0] != '\0';
+}
+
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
+    if (id == WIFI_EVENT_AP_STACONNECTED) {
+        wifi_event_ap_staconnected_t *e = (wifi_event_ap_staconnected_t *)data;
+        ESP_LOGI(TAG, "AP: client " MACSTR " joined", MAC2STR(e->mac));
+        return;
+    }
+    if (id == WIFI_EVENT_AP_STADISCONNECTED) {
+        wifi_event_ap_stadisconnected_t *e = (wifi_event_ap_stadisconnected_t *)data;
+        ESP_LOGI(TAG, "AP: client " MACSTR " left, reason %u", MAC2STR(e->mac), e->reason);
+        return;
+    }
     if (id == WIFI_EVENT_STA_START) {
         /* From the event, not from the caller: connecting before the driver has
          * finished starting returns ESP_ERR_WIFI_NOT_STARTED. */
@@ -108,7 +138,49 @@ static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data
 
 bool imx_wifi_have_credentials(void)
 {
-    return WIFI_STA_SSID[0] != '\0';
+    return WIFI_STA_SSID[0] != '\0' || ap_mode();
+}
+
+/* The board as its own access point. esp_wifi_init has run. */
+static esp_err_t start_ap(char *ip_out, size_t ip_len)
+{
+    size_t pl = strlen(WIFI_AP_PASSWORD);
+    if (strlen(WIFI_AP_SSID) > 32 || pl < 8 || pl > 63) {
+        ESP_LOGE(TAG, "AP: SSID must be 1-32 bytes and WIFI_AP_PASSWORD 8-63 characters "
+                      "(WPA2); the password is %u", (unsigned)pl);
+        return ESP_ERR_INVALID_ARG;
+    }
+    wifi_config_t ap_cfg = { 0 };
+    memcpy(ap_cfg.ap.ssid, WIFI_AP_SSID, strlen(WIFI_AP_SSID));
+    ap_cfg.ap.ssid_len = strlen(WIFI_AP_SSID);
+    strncpy((char *)ap_cfg.ap.password, WIFI_AP_PASSWORD, sizeof(ap_cfg.ap.password) - 1);
+    ap_cfg.ap.channel = WIFI_AP_CHANNEL;
+    ap_cfg.ap.max_connection = AP_MAX_CONN;
+    /* WPA2 only, no PMF requirement: what the NFC tag's Wi-Fi record and the
+     * QR code say, and what every phone joins without asking. */
+    ap_cfg.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    ap_cfg.ap.pairwise_cipher = WIFI_CIPHER_TYPE_CCMP;
+    ap_cfg.ap.pmf_cfg.required = false;
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg));
+    esp_err_t err = esp_wifi_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "AP: esp_wifi_start failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    esp_wifi_set_ps(WIFI_PS_NONE);
+
+    esp_netif_ip_info_t ipi = { 0 };
+    esp_netif_get_ip_info(s_netif, &ipi);
+    snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&ipi.ip));
+    ESP_LOGI(TAG, "AP \"%s\" up on channel %d, WPA2, up to %d clients; this board is %s",
+             WIFI_AP_SSID, WIFI_AP_CHANNEL, AP_MAX_CONN, s_ip);
+    if (ip_out && ip_len) {
+        strncpy(ip_out, s_ip, ip_len - 1);
+        ip_out[ip_len - 1] = '\0';
+    }
+    return ESP_OK;
 }
 
 /*
@@ -178,7 +250,7 @@ esp_err_t imx_wifi_connect(char *ip_out, size_t ip_len)
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    s_netif = esp_netif_create_default_wifi_sta();
+    s_netif = ap_mode() ? esp_netif_create_default_wifi_ap() : esp_netif_create_default_wifi_sta();
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         WIFI_EVENT, ESP_EVENT_ANY_ID, &on_wifi_event, NULL, NULL));
@@ -193,6 +265,10 @@ esp_err_t imx_wifi_connect(char *ip_out, size_t ip_len)
         ESP_LOGE(TAG, "esp_wifi_init failed: %s - the C6 did not answer. "
                       "Run examples/c6_link_check.", esp_err_to_name(err));
         return ESP_ERR_WIFI_NOT_INIT;
+    }
+
+    if (ap_mode()) {
+        return start_ap(ip_out, ip_len);
     }
 
     wifi_config_t sta_cfg = { 0 };

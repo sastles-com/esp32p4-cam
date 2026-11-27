@@ -26,7 +26,9 @@ extern "C" {
 #endif
 
 /**
- * @brief Bring up WiFi and block until the board has an IP, or fail.
+ * @brief Bring up WiFi and block until the board has an IP, or fail. With
+ * WIFI_AP_SSID defined, start the board's own access point instead (its IP is
+ * then 192.168.4.1).
  *
  * Does the whole sequence: NVS, esp_netif, the default event loop, the STA
  * netif, credentials, connect, and the wait for DHCP. Retries a few times on a

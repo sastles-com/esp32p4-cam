@@ -7,3 +7,4 @@ firmware/dependencies.lock
 firmware/components/imx_wifi/include/wifi_credentials.h
 !firmware/sdkconfig.defaults
 !firmware/sdkconfig.defaults.c5
+nfc-out/
