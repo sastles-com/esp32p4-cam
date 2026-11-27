@@ -6,7 +6,10 @@
 // フタ上面の穴の上に偏光フィルムを貼る（浅い座ぐりで位置決め）．
 //
 // 座標: トレイ左下の角が原点，X = 基板幅，Y = 基板高さ（FPC 側が Y=0），z=0 がトレイ底面．
-// 出力: part = "tray" / "lid" / "assembly"
+// 偏光板の回転リング（pol_enable）: フタの穴に回転リング（rotor）の筒を通し，フタの内側から C 形の止め輪（ring）を
+// 筒の溝にはめて抜け止めする．リング上面の座ぐりに偏光フィルム（円形）を貼る．リングの板バネ 2 枚がフタ上面を押し，
+// 止め輪を天井の裏に押し付けて摩擦で角度を保つ．フタ上面に 0〜180° の目盛り（15° 毎），リングに指標（0° と 180°）．
+// 出力: part = "tray" / "lid" / "rotor" / "ring" / "assembly"
 //   tray: そのまま（底面をベッドに）印刷．
 //   lid : 上下を反転して（天面をベッドに）印刷．スナップ爪の返しは 45° の面とわずかな張り出しだけでサポート不要．
 //
@@ -16,7 +19,7 @@
 //              データシートの全高 11.5（基板込み）だとレンズの先端は基板上面から約 10.5 で当たる．
 
 /* [出力] */
-part = "assembly";       // [tray, lid, assembly]
+part = "assembly";       // [tray, lid, rotor, ring, assembly]
 
 /* [基板] */
 pcb_w = 25;              // 基板幅（X）
@@ -65,6 +68,27 @@ view_d = 14;             // 撮影穴の内側の直径（外側へ 45° で広�
 film_w = 0;              // 偏光フィルム用の座ぐり（正方形）．0 で無し（試作で不要とした）
 film_depth = 0.3;
 
+/* [偏光板の回転リング] */
+pol_enable = true;
+pol_hole_r = 9.0;        // フタの軸受け穴の半径（下側の押さえ柱の縁 r=8.5 にかかる分は柱の付け根を削る）
+pol_clr = 0.2;           // 軸受けのすき間（半径）
+pol_ap_r = 7.5;          // 撮影の開口の半径
+pol_R = 12.5;            // リングの外半径
+pol_fl_t = 2.0;          // リングのつばの厚さ
+pol_gap = 0.3;           // 組んだ状態のつば下面とフタ上面のすき間
+pol_film_r = 9.2;        // 偏光フィルムの座ぐり（φ18 のフィルム用）
+pol_film_depth = 0.4;
+pol_groove_d = 0.5;      // 筒の止め輪溝の深さ
+ring_t = 1.0;            // 止め輪の厚さ
+ring_w = 1.5;            // 止め輪の幅（半径方向）
+ring_open = 0.92;        // 止め輪の開口幅 / 溝底の直径（押し込むとき片側 0.66 開く）
+tongue_ang = 40;         // 板バネの角度幅
+tongue_t = 1.2;          // 板バネの厚さ
+tongue_preload = 0.25;   // 板バネのたわみ
+tick_r0 = 13.0;          // 目盛り（フタ上面）
+tick_len = 1.0;
+tick_len_major = 2.0;
+
 $fn = 64;
 
 in_w = pcb_w + 2 * fit_clr;
@@ -88,6 +112,14 @@ lid_top_in = tray_h + lid_clear;         // 天井（内面）
 lid_top = lid_top_in + lid_t;            // 天面
 lens = [pcb_x0 + pcb_w / 2, pcb_y0 + lens_y];
 tab_y0 = out_h / 2 - tab_w / 2;
+// 回転リング（z はトレイ座標．組んだ状態＝板バネに押されて止め輪が天井に当たった状態）
+tube_r = pol_hole_r - pol_clr;
+gr_r = tube_r - pol_groove_d;               // 溝底の半径
+fl_z0 = lid_top + pol_gap;                  // つば下面
+gr_z0 = lid_top_in - ring_t;                // 溝の下面（止め輪の下面）
+tube_z0 = gr_z0 - 0.8;                      // 筒の下端
+ring_ro = gr_r + 0.05 + ring_w;             // 止め輪の外半径
+post_notch_r = ring_ro + 0.4;               // 押さえ柱の付け根を削る半径
 
 // 計算値
 tab_l = slot_top - lid_z0;
@@ -173,6 +205,16 @@ module lid() {
         for (p = holes)
             translate([pcb_x0 + p[0], pcb_y0 + p[1], tray_h])
                 cylinder(d = pin_d + 0.4, h = pin_above + 0.3);
+        if (pol_enable) {
+            // 回転リングの軸受け穴
+            translate([lens[0], lens[1], lid_top_in - 1]) cylinder(r = pol_hole_r, h = lid_t + 2);
+            // 止め輪の逃げ（下側の押さえ柱の付け根を削る）
+            translate([lens[0], lens[1], lid_top_in - ring_t - 1]) cylinder(r = post_notch_r, h = ring_t + 1.01);
+            // 目盛り（0〜180°，15° 毎．0・45・90・135・180 は長い）．+X が 0°，+Y（FPC と反対側）が 90°
+            for (a = [0 : 15 : 180])
+                translate([lens[0], lens[1], lid_top - 0.4]) rotate([0, 0, a])
+                    translate([tick_r0, -0.25, 0]) cube([a % 45 == 0 ? tick_len_major : tick_len, 0.5, 1]);
+        } else
         // 撮影穴（外側へ 45° で広がる）
         translate([lens[0], lens[1], lid_top_in - 0.01])
             cylinder(d1 = view_d, d2 = view_d + 2 * (lid_t + 0.02), h = lid_t + 0.02);
@@ -183,9 +225,82 @@ module lid() {
     }
 }
 
+// 回転リング（組んだ状態の位置，レンズ中心が原点）
+module rotor() {
+    tongue_cx = [120, 300];                 // 板バネの中心角（指標 0° から離す）
+    difference() {
+        union() {
+            translate([0, 0, fl_z0]) cylinder(r = pol_R, h = pol_fl_t);
+            translate([0, 0, tube_z0]) cylinder(r = tube_r, h = fl_z0 - tube_z0 + 0.01);
+            // 板バネ先端の突起（フタ上面を押す）
+            for (c = tongue_cx)
+                rotate([0, 0, c + tongue_ang / 2 - 4]) translate([pol_R - 0.8, 0, fl_z0 - pol_gap - tongue_preload])
+                    cylinder(d1 = 0.8, d2 = 1.4, h = pol_gap + tongue_preload + (pol_fl_t - tongue_t) + 0.01);
+        }
+        // 開口
+        translate([0, 0, tube_z0 - 1]) cylinder(r = pol_ap_r, h = 20);
+        // 偏光フィルムの座ぐり
+        translate([0, 0, fl_z0 + pol_fl_t - pol_film_depth]) cylinder(r = pol_film_r, h = 1);
+        // 止め輪の溝
+        translate([0, 0, gr_z0]) difference() {
+            cylinder(r = tube_r + 1, h = ring_t + 0.2);
+            translate([0, 0, -1]) cylinder(r = gr_r, h = ring_t + 2.2);
+        }
+        // 板バネ: 外周の帯（r = pol_R-1.6 .. pol_R）を，内側のスリットと先端のスリットで切り離し，下面を薄くする
+        for (c = tongue_cx) {
+            a0 = c - tongue_ang / 2;
+            translate([0, 0, fl_z0 - 1]) linear_extrude(pol_fl_t + 2) arc2d(pol_R - 2.1, pol_R - 1.6, a0, tongue_ang);
+            translate([0, 0, fl_z0 - 1]) linear_extrude(pol_fl_t + 2) arc2d(pol_R - 2.1, pol_R + 1, a0 + tongue_ang, 3);
+            translate([0, 0, fl_z0 - 1]) linear_extrude(1 + pol_fl_t - tongue_t) arc2d(pol_R - 1.6 - 0.01, pol_R + 1, a0 + 2, tongue_ang);
+        }
+        // 指標（0° と 180°）: 外周の V 切り欠きと上面の線
+        for (a = [0, 180]) rotate([0, 0, a]) {
+            translate([pol_R, 0, fl_z0 - 1]) rotate([0, 0, 45]) cube([1.2, 1.2, pol_fl_t + 2], center = true);
+            translate([pol_film_r + 0.6, -0.25, fl_z0 + pol_fl_t - 0.4]) cube([pol_R - pol_film_r - 1.2, 0.5, 1]);
+        }
+        // 指掛けの刻み（外周）
+        for (a = [7.5 : 15 : 360]) rotate([0, 0, a]) translate([pol_R + 0.1, 0, fl_z0 - 1]) cylinder(r = 0.5, h = pol_fl_t + 2, $fn = 12);
+    }
+}
+
+// 扇形の帯（r0..r1，a0 から da 度）
+module arc2d(r0, r1, a0, da) {
+    n = max(2, ceil(da / 3));
+    polygon(concat([for (i = [0 : n]) let (a = a0 + da * i / n) r1 * [cos(a), sin(a)]],
+                   [for (i = [n : -1 : 0]) let (a = a0 + da * i / n) r0 * [cos(a), sin(a)]]));
+}
+
+// C 形の止め輪（筒の溝に横から押し込む）
+module cring() {
+    open_w = ring_open * 2 * gr_r;
+    difference() {
+        cylinder(r = ring_ro, h = ring_t);
+        translate([0, 0, -1]) cylinder(r = gr_r + 0.05, h = ring_t + 2);
+        // 開口（導入の面取り付き）
+        translate([0, 0, -1]) linear_extrude(ring_t + 2)
+            polygon([[-open_w / 2, 0], [open_w / 2, 0], [open_w / 2 + 1, -ring_ro - 1], [-open_w / 2 - 1, -ring_ro - 1]]);
+    }
+}
+
+// 計算値（回転リング）
+if (pol_enable) {
+    tl = (pol_R - 0.8) * PI * (tongue_ang - 4) / 180;
+    echo(str("polarizer rotor: R=", pol_R, " aperture d=", 2 * pol_ap_r, " film d<=", 2 * pol_film_r - 0.4,
+             "  tube r=", tube_r, " groove r=", gr_r, "  ring r=", gr_r + 0.05, "..", ring_ro, " open=", ring_open * 2 * gr_r,
+             "  tongue L=", tl, " strain=", 3 * tongue_t * tongue_preload / (2 * tl * tl) * 100, " %",
+             "  rotor top z=", fl_z0 + pol_fl_t, "  post notch r=", post_notch_r));
+    if (lens[1] - ring_ro < wall + 0.1) echo("WARNING: retaining ring hits the lid inner wall");
+}
+
 if (part == "tray") tray();
 else if (part == "lid") translate([0, 0, lid_top]) mirror([0, 0, 1]) lid();   // 天面をベッドに
+else if (part == "rotor") translate([0, 0, fl_z0 + pol_fl_t]) mirror([0, 0, 1]) rotor();   // 上面をベッドに
+else if (part == "ring") cring();
 else {
     color("Gold") tray();
     color("SkyBlue", 0.6) lid();
+    if (pol_enable) translate([lens[0], lens[1], 0]) {
+        color("DimGray") rotor();
+        color("Tomato") translate([0, 0, gr_z0]) cring();
+    }
 }
